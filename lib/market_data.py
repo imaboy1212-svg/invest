@@ -207,11 +207,18 @@ class SupplementaryData:
 
 
 def find_mentioned_ticker(text: str) -> tuple[str, str] | None:
-    """text 안에 포함된 상장사명을 찾는다 (긴 이름 우선, 하드코딩 종목 리스트 없이 뉴스/주제명 기반 탐지용)."""
-    names = sorted(_ticker_name_map().keys(), key=len, reverse=True)
+    """text 안에 포함된 상장사명을 찾는다 (긴 이름 우선, 하드코딩 종목 리스트 없이 뉴스/주제명 기반 탐지용).
+
+    보강 데이터용 조회이므로 pykrx가 실패해도 파이프라인을 막지 않는다.
+    """
+    try:
+        name_map = _ticker_name_map()
+    except Exception:
+        return None
+    names = sorted(name_map.keys(), key=len, reverse=True)
     for name in names:
         if len(name) >= 2 and name in text:
-            return name, _ticker_name_map()[name]
+            return name, name_map[name]
     return None
 
 

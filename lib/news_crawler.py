@@ -26,7 +26,7 @@ MIN_SOURCES_REQUIRED = 2
 _SITES = [
     {
         "name": "한국경제",
-        "url": "https://www.hankyung.com/finance",
+        "url": "https://www.hankyung.com/",
         "href_pattern": re.compile(r"/article/\d+"),
     },
     {
@@ -61,11 +61,15 @@ def _crawl_site(site: dict) -> list[Headline]:
 
     seen_urls = set()
     headlines: list[Headline] = []
+    all_hrefs_with_text = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
+        title = a.get_text(strip=True)
+        if len(title) >= MIN_HEADLINE_LEN:
+            all_hrefs_with_text.append(href)
+
         if not site["href_pattern"].search(href):
             continue
-        title = a.get_text(strip=True)
         if len(title) < MIN_HEADLINE_LEN:
             continue
         full_url = href if href.startswith("http") else requests.compat.urljoin(site["url"], href)
@@ -75,6 +79,10 @@ def _crawl_site(site: dict) -> list[Headline]:
         headlines.append(Headline(source=site["name"], title=title, url=full_url))
         if len(headlines) >= MAX_HEADLINES_PER_SITE:
             break
+
+    if not headlines:
+        sample = all_hrefs_with_text[:15]
+        print(f"[진단] {site['name']} href 샘플(텍스트 8자 이상, 최대 15개): {sample}")
     return headlines
 
 
