@@ -10,7 +10,7 @@ import os
 from google import genai
 from google.genai import types
 
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
 _RESPONSE_SCHEMA_HINT = """
 다음 JSON 형식으로만 응답하라 (설명 문장 없이 JSON만):
