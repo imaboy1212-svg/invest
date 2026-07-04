@@ -1,0 +1,157 @@
+"""WP투자정보본부 주제 후보 자동화 파이프라인 진입점.
+
+실행 흐름 (WP투자토픽자동화가이드.md 4장 그대로):
+1) 날짜/요일 검증  2) 지수 조회+교차검증  3) 뉴스 크롤링
+4) Gemini로 주제 후보 3건 + 상세 브리핑 생성  5) 완료 주제 필터링
+6) 브리핑 마크다운 파일 생성  7) 텔레그램 전송
+"""
+
+import sys
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from dotenv import load_dotenv
+
+from lib import calendar_utils, completed_topics, gemini_client, market_data, news_crawler, telegram_client
+
+BRIEFINGS_DIR = Path(__file__).resolve().parent / "briefings"
+LOGS_DIR = Path(__file__).resolve().parent / "logs"
+
+TEAM_ORDER = ["종목리포트", "마켓칼럼", "IPO"]
+
+
+def _log(lines: list[str]) -> None:
+    print("\n".join(lines))
+    LOGS_DIR.mkdir(exist_ok=True)
+    log_path = LOGS_DIR / f"{datetime.now(ZoneInfo('Asia/Seoul')).date().isoformat()}.log"
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n\n")
+
+
+def _build_run_note(run_ctx) -> str | None:
+    if run_ctx.mode == "weekend":
+        return (
+            f"{run_ctx.note}. 주말 사이 상위종목 이슈·경제 뉴스가 있으면 금요일 데이터보다 "
+            "그 뉴스를 우선 반영하고, '월요일에 주목해야 할 이슈' 관점으로 주제를 구성할 것. "
+            "주말 뉴스가 없으면 금요일 종가 기준으로만 구성할 것."
+        )
+    return run_ctx.note
+
+
+def _briefing_markdown(topic: dict, run_note: str | None, extra_quote_line: str | None) -> str:
+    lines = [f"# [{topic['team']}] {topic['name']}", ""]
+    if run_note:
+        lines += [f"> {run_note}", ""]
+    if topic.get("golden_time"):
+        lines += ["**⚡ 골든타임**", ""]
+
+    lines.append("## 핵심 수치")
+    for kf in topic.get("key_figures", []):
+        lines.append(f"- {kf['figure']} (출처: {kf['source']})")
+    if extra_quote_line:
+        lines.append(f"- {extra_quote_line}")
+    lines.append("")
+
+    lines.append("## 관련 뉴스")
+    for news in topic.get("related_news", []):
+        lines.append(f"- [{news['source']}] {news['headline']}")
+    lines.append("")
+
+    structure = topic.get("article_structure", {})
+    lines.append("## 예상 기사 구조")
+    if structure.get("intro_angle"):
+        lines.append(f"- 서론 각도: {structure['intro_angle']}")
+    for point in structure.get("body_points", []):
+        lines.append(f"- 본론 관점: {point}")
+    lines.append("")
+
+    lines.append(f"## 추천 사유\n{topic.get('reason', '')}\n")
+    return "\n".join(lines)
+
+
+def _summary_message(run_ctx, index_snapshot, topics: list[dict], excluded: list[dict], news_failed: bool) -> str:
+    header = f"📊 WP투자 주제 후보 ({run_ctx.now_kst.strftime('%Y-%m-%d %H:%M')} 기준)"
+    lines = [header, ""]
+    if run_ctx.note:
+        lines += [f"※ {run_ctx.note}", ""]
+
+    for label, quote in index_snapshot.items():
+        tag = " ⚡골든타임" if quote.golden_time else ""
+        lines.append(quote.display_line() + tag)
+    lines.append("")
+
+    by_team = {t["team"]: t for t in topics}
+    for team in TEAM_ORDER:
+        topic = by_team.get(team)
+        if not topic:
+            lines.append(f"[{team}] 확인된 수치 부족으로 이번 회차 미생성")
+            continue
+        golden = " ⚡골든타임" if topic.get("golden_time") else ""
+        first_figure = topic["key_figures"][0] if topic.get("key_figures") else None
+        lines.append(f"[{team}] {topic['name']}{golden}")
+        if first_figure:
+            lines.append(f"- 확인 수치: {first_figure['figure']}, 출처 {first_figure['source']}")
+        lines.append(f"- 사유: {topic.get('reason', '')}")
+        lines.append("")
+
+    if news_failed:
+        lines.append("※ 뉴스 수집 실패, 지수 데이터만 반영")
+    if excluded:
+        lines.append(f"※ 완료 주제 {len(excluded)}건 자동 제외됨")
+    lines.append(f"※ 상세 브리핑 파일 {len(topics)}건 첨부")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    load_dotenv()
+
+    run_ctx = calendar_utils.get_run_context()
+    run_note = _build_run_note(run_ctx)
+    log_lines = [f"[실행] mode={run_ctx.mode} data_date={run_ctx.data_date} note={run_ctx.note}"]
+
+    index_snapshot = market_data.get_index_snapshot(run_ctx.data_date)
+    index_lines = [q.display_line() for q in index_snapshot.values()]
+    log_lines.append("[지수] " + " | ".join(index_lines))
+
+    headlines, succeeded_sources = news_crawler.collect_headlines()
+    news_failed = len(succeeded_sources) == 0
+    news_lines = [f"[{h.source}] {h.title}" for h in headlines]
+    log_lines.append(f"[뉴스] 성공 언론사={succeeded_sources} 헤드라인 {len(headlines)}건")
+
+    raw_topics = gemini_client.generate_topics(run_note, index_lines, news_lines)
+    log_lines.append(f"[Gemini] 생성된 주제 {len(raw_topics)}건")
+
+    new_topics, excluded = completed_topics.filter_new_topics(raw_topics)
+    log_lines.append(f"[필터링] 신규 {len(new_topics)}건 / 완료주제 제외 {len(excluded)}건")
+
+    BRIEFINGS_DIR.mkdir(exist_ok=True)
+    date_str = run_ctx.now_kst.date().isoformat()
+    briefing_paths = []
+    for topic in new_topics:
+        extra_quote_line = None
+        match = market_data.find_mentioned_ticker(topic["name"])
+        if match:
+            name, _code = match
+            quote = market_data.get_stock_snapshot(name, run_ctx.data_date)
+            if quote and quote.adopted is not None:
+                extra_quote_line = quote.display_line()
+
+        content = _briefing_markdown(topic, run_note, extra_quote_line)
+        path = BRIEFINGS_DIR / f"{date_str}-{topic['team']}.md"
+        path.write_text(content, encoding="utf-8")
+        briefing_paths.append(path)
+    log_lines.append(f"[브리핑] 파일 {len(briefing_paths)}건 생성: {[p.name for p in briefing_paths]}")
+
+    summary = _summary_message(run_ctx, index_snapshot, new_topics, excluded, news_failed)
+    telegram_client.send_message(summary)
+    for path in briefing_paths:
+        telegram_client.send_document(path)
+    log_lines.append("[텔레그램] 요약 메시지 + 브리핑 파일 전송 완료")
+
+    _log(log_lines)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
