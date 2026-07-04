@@ -89,11 +89,14 @@ def collect_headlines() -> tuple[list[Headline], list[str]]:
     for site in _SITES:
         try:
             headlines = _crawl_site(site)
-        except Exception:
+        except Exception as exc:
+            print(f"[뉴스크롤링 실패] {site['name']}: {type(exc).__name__}: {exc}")
             continue
-        if headlines:
-            all_headlines.extend(headlines)
-            succeeded_sources.append(site["name"])
+        if not headlines:
+            print(f"[뉴스크롤링 0건] {site['name']}: 페이지는 받았으나 href_pattern에 걸린 링크 없음")
+            continue
+        all_headlines.extend(headlines)
+        succeeded_sources.append(site["name"])
         if len(succeeded_sources) >= MIN_SOURCES_REQUIRED:
             break
 
