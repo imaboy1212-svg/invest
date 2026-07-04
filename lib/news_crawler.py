@@ -1,15 +1,14 @@
 """증권 뉴스 헤드라인 크롤링.
 
-우선순위: 한국경제 → 매일경제 → 서울경제 → 파이낸셜뉴스.
-최소 2개 언론사 확인을 목표로 하되, 한 사이트가 실패하면 다음 우선순위로 넘어간다.
+네이버증권 뉴스(여러 언론사를 한 페이지에 모아 놓아 셀렉터가 비교적 안정적)를
+우선 소스로 쓰고, 개별 언론사 사이트를 폴백으로 둔다.
 전부 실패하면 빈 리스트를 반환하고, 호출부(topic_recommender.py)가 리포트에
 "뉴스 수집 실패, 지수 데이터만 반영"을 명시한다.
 
-주의: 각 언론사 페이지의 정확한 CSS 셀렉터는 이 자동화 환경의 네트워크 정책상
-직접 접속/검증이 불가능해 확정하지 못했다. 셀렉터 대신 기사 링크 패턴(href에 숫자
-기사 ID 포함) + 본문 텍스트 길이로 헤드라인을 골라내는 휴리스틱을 사용한다.
-실제 운영 중 특정 사이트에서 헤드라인이 비정상적으로 수집되면 해당 사이트의
-ARTICLE_HREF_PATTERN을 조정해야 한다.
+주의: 각 사이트의 정확한 마크업은 이 자동화 환경의 네트워크 정책상 직접
+접속/검증이 불가능해 확정하지 못했다. 셀렉터 대신 기사 링크 패턴 + 텍스트
+길이로 헤드라인을 골라내는 휴리스틱을 쓰고, 0건일 때는 실제 href 샘플을
+로그로 남겨 다음 반복에서 패턴을 조정할 수 있게 한다.
 """
 
 import re
@@ -20,10 +19,18 @@ from bs4 import BeautifulSoup
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 MIN_HEADLINE_LEN = 8
-MAX_HEADLINES_PER_SITE = 8
+MAX_HEADLINES_PER_SITE = 10
 MIN_SOURCES_REQUIRED = 2
 
-_SITES = [
+# 네이버증권 뉴스: 여러 언론사 기사를 한 페이지에 모아두는 아그리게이터.
+# 개별 기사 언론사명은 각 항목의 .press 클래스에서 뽑아내고, 못 찾으면 "네이버증권"으로 표시한다.
+_NAVER_FINANCE_SITES = [
+    {"name": "네이버증권-주요뉴스", "url": "https://finance.naver.com/news/mainnews.naver"},
+    {"name": "네이버증권-인기뉴스", "url": "https://finance.naver.com/news/populartop.naver"},
+]
+
+# 개별 언론사 사이트 (아그리게이터가 전부 실패했을 때 폴백)
+_PRESS_SITES = [
     {
         "name": "한국경제",
         "url": "https://www.hankyung.com/",
@@ -46,6 +53,8 @@ _SITES = [
     },
 ]
 
+_NAVER_ARTICLE_PATTERN = re.compile(r"/news/news_read\.naver")
+
 
 @dataclass
 class Headline:
@@ -54,7 +63,46 @@ class Headline:
     url: str
 
 
-def _crawl_site(site: dict) -> list[Headline]:
+def _crawl_naver_finance(site: dict) -> list[Headline]:
+    resp = requests.get(site["url"], headers=_HEADERS, timeout=10)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "lxml")
+
+    seen_urls = set()
+    headlines: list[Headline] = []
+    all_hrefs_with_text = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        title = a.get_text(strip=True)
+        if len(title) >= MIN_HEADLINE_LEN:
+            all_hrefs_with_text.append(href)
+
+        if not _NAVER_ARTICLE_PATTERN.search(href):
+            continue
+        if len(title) < MIN_HEADLINE_LEN:
+            continue
+        full_url = requests.compat.urljoin(site["url"], href)
+        if full_url in seen_urls:
+            continue
+        seen_urls.add(full_url)
+
+        press = "네이버증권"
+        container = a.find_parent(["dl", "li", "div"])
+        if container:
+            press_tag = container.select_one(".press")
+            if press_tag:
+                press = press_tag.get_text(strip=True)
+
+        headlines.append(Headline(source=press, title=title, url=full_url))
+        if len(headlines) >= MAX_HEADLINES_PER_SITE:
+            break
+
+    if not headlines:
+        print(f"[진단] {site['name']} href 샘플(텍스트 8자 이상, 최대 15개): {all_hrefs_with_text[:15]}")
+    return headlines
+
+
+def _crawl_press_site(site: dict) -> list[Headline]:
     resp = requests.get(site["url"], headers=_HEADERS, timeout=10)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "lxml")
@@ -81,22 +129,36 @@ def _crawl_site(site: dict) -> list[Headline]:
             break
 
     if not headlines:
-        sample = all_hrefs_with_text[:15]
-        print(f"[진단] {site['name']} href 샘플(텍스트 8자 이상, 최대 15개): {sample}")
+        print(f"[진단] {site['name']} href 샘플(텍스트 8자 이상, 최대 15개): {all_hrefs_with_text[:15]}")
     return headlines
 
 
 def collect_headlines() -> tuple[list[Headline], list[str]]:
-    """(수집된 헤드라인 리스트, 성공한 언론사명 리스트) 반환.
+    """(수집된 헤드라인 리스트, 성공한 언론사/소스명 리스트) 반환.
 
-    최소 2개 언론사 성공을 목표로 우선순위 순서대로 계속 시도한다.
+    최소 2개 언론사(또는 소스) 확인을 목표로, 네이버증권 아그리게이터를 먼저 시도하고
+    실패하면 개별 언론사 사이트로 폴백한다.
     """
     all_headlines: list[Headline] = []
-    succeeded_sources: list[str] = []
+    succeeded_sources: set[str] = set()
 
-    for site in _SITES:
+    for site in _NAVER_FINANCE_SITES:
         try:
-            headlines = _crawl_site(site)
+            headlines = _crawl_naver_finance(site)
+        except Exception as exc:
+            print(f"[뉴스크롤링 실패] {site['name']}: {type(exc).__name__}: {exc}")
+            continue
+        if not headlines:
+            print(f"[뉴스크롤링 0건] {site['name']}: 페이지는 받았으나 기사 링크 패턴 매칭 없음")
+            continue
+        all_headlines.extend(headlines)
+        succeeded_sources.update(h.source for h in headlines)
+        if len(succeeded_sources) >= MIN_SOURCES_REQUIRED:
+            return all_headlines, sorted(succeeded_sources)
+
+    for site in _PRESS_SITES:
+        try:
+            headlines = _crawl_press_site(site)
         except Exception as exc:
             print(f"[뉴스크롤링 실패] {site['name']}: {type(exc).__name__}: {exc}")
             continue
@@ -104,8 +166,8 @@ def collect_headlines() -> tuple[list[Headline], list[str]]:
             print(f"[뉴스크롤링 0건] {site['name']}: 페이지는 받았으나 href_pattern에 걸린 링크 없음")
             continue
         all_headlines.extend(headlines)
-        succeeded_sources.append(site["name"])
+        succeeded_sources.add(site["name"])
         if len(succeeded_sources) >= MIN_SOURCES_REQUIRED:
             break
 
-    return all_headlines, succeeded_sources
+    return all_headlines, sorted(succeeded_sources)
