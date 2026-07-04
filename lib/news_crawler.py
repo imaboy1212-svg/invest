@@ -26,7 +26,6 @@ MIN_SOURCES_REQUIRED = 2
 # 개별 기사 언론사명은 각 항목의 .press 클래스에서 뽑아내고, 못 찾으면 "네이버증권"으로 표시한다.
 _NAVER_FINANCE_SITES = [
     {"name": "네이버증권-주요뉴스", "url": "https://finance.naver.com/news/mainnews.naver"},
-    {"name": "네이버증권-인기뉴스", "url": "https://finance.naver.com/news/populartop.naver"},
 ]
 
 # 개별 언론사 사이트 (아그리게이터가 전부 실패했을 때 폴백)
