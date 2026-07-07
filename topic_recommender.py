@@ -13,7 +13,15 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from lib import calendar_utils, completed_topics, gemini_client, market_data, news_crawler, telegram_client
+from lib import (
+    calendar_utils,
+    completed_topics,
+    gemini_client,
+    market_data,
+    news_crawler,
+    stock_discovery,
+    telegram_client,
+)
 
 BRIEFINGS_DIR = Path(__file__).resolve().parent / "briefings"
 LOGS_DIR = Path(__file__).resolve().parent / "logs"
@@ -119,7 +127,11 @@ def main() -> int:
     news_lines = [f"[{h.source}] {h.title}" for h in headlines]
     log_lines.append(f"[뉴스] 성공 언론사={succeeded_sources} 헤드라인 {len(headlines)}건")
 
-    raw_topics = gemini_client.generate_topics(run_note, index_lines, news_lines)
+    stock_candidates = stock_discovery.discover_candidates(run_ctx.data_date, news_lines)
+    stock_candidate_lines = [c.summary_line() for c in stock_candidates[:10]]
+    log_lines.append(f"[종목발굴] 후보 {len(stock_candidates)}건 (상위: {stock_candidate_lines[:5]})")
+
+    raw_topics = gemini_client.generate_topics(run_note, index_lines, news_lines, stock_candidate_lines)
     log_lines.append(f"[Gemini] 생성된 주제 {len(raw_topics)}건")
 
     new_topics, excluded = completed_topics.filter_new_topics(raw_topics)

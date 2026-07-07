@@ -40,7 +40,12 @@ key_figures는 3~5개, related_news는 2~3개로 채워라.
 """
 
 
-def _build_prompt(run_note: str | None, index_lines: list[str], news_lines: list[str]) -> str:
+def _build_prompt(
+    run_note: str | None,
+    index_lines: list[str],
+    news_lines: list[str],
+    stock_candidate_lines: list[str],
+) -> str:
     context_lines = []
     if run_note:
         context_lines.append(f"[실행 기준] {run_note}")
@@ -51,6 +56,13 @@ def _build_prompt(run_note: str | None, index_lines: list[str], news_lines: list
         context_lines.extend(news_lines)
     else:
         context_lines.append("(뉴스 수집 실패 - 지수 데이터만 활용)")
+    if stock_candidate_lines:
+        context_lines.append("[종목리포트 후보 종목 - 거래대금/상승률/인기검색 종합, 점수 높은 순]")
+        context_lines.extend(stock_candidate_lines)
+        context_lines.append(
+            "종목리포트 주제는 가능하면 위 후보 종목 중에서 고르되, 확인된 뉴스나 수치 근거가 "
+            "있는 종목을 우선하라. 후보에 없어도 뉴스에 확실한 근거가 있는 종목이면 사용해도 된다."
+        )
 
     return (
         "너는 증권 매체의 데스크다. 아래 확인된 지수/뉴스 데이터만 근거로 삼아 "
@@ -61,10 +73,15 @@ def _build_prompt(run_note: str | None, index_lines: list[str], news_lines: list
     )
 
 
-def generate_topics(run_note: str | None, index_lines: list[str], news_lines: list[str]) -> list[dict]:
+def generate_topics(
+    run_note: str | None,
+    index_lines: list[str],
+    news_lines: list[str],
+    stock_candidate_lines: list[str] | None = None,
+) -> list[dict]:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-    prompt = _build_prompt(run_note, index_lines, news_lines)
+    prompt = _build_prompt(run_note, index_lines, news_lines, stock_candidate_lines or [])
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
