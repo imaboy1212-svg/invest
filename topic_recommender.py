@@ -47,6 +47,48 @@ def _build_run_note(run_ctx) -> str | None:
     return run_ctx.note
 
 
+def _enforce_stock_report_figures(topic: dict, data_date) -> None:
+    """종목리포트 key_figures를 해당 종목 고유 수치로 강제한다.
+
+    Gemini가 지수(코스피/코스닥) 수치를 종목리포트 key_figures에 섞어 넣는 문제가 있어,
+    지수 언급 항목은 제거하고 pykrx 실측 수급/시총 데이터를 우선 채운다.
+    """
+    confirmed_figures = []
+    match = market_data.find_mentioned_ticker(topic["name"])
+    if match:
+        name, _code = match
+        quote = market_data.get_stock_snapshot(name, data_date)
+        if quote and quote.adopted_change_pct is not None:
+            confirmed_figures.append({
+                "figure": f"{name} 등락률 {quote.adopted_change_pct:+.2f}% (종가 {quote.adopted:,.0f}원)",
+                "source": quote.adopted_source,
+            })
+
+        supplementary = market_data.get_supplementary_data(name, data_date)
+        if supplementary.foreign_net_buy is not None:
+            confirmed_figures.append({
+                "figure": f"{name} 외국인 순매수 {supplementary.foreign_net_buy:,.0f}",
+                "source": "pykrx",
+            })
+        if supplementary.institution_net_buy is not None:
+            confirmed_figures.append({
+                "figure": f"{name} 기관 순매수 {supplementary.institution_net_buy:,.0f}",
+                "source": "pykrx",
+            })
+        if supplementary.market_cap is not None:
+            confirmed_figures.append({
+                "figure": f"{name} 시가총액 {supplementary.market_cap:,.0f}원",
+                "source": "pykrx",
+            })
+
+    filtered_gemini_figures = [
+        kf for kf in topic.get("key_figures", [])
+        if "코스피" not in kf.get("figure", "") and "코스닥" not in kf.get("figure", "")
+    ]
+
+    topic["key_figures"] = (confirmed_figures + filtered_gemini_figures)[:5]
+
+
 def _briefing_markdown(topic: dict, run_note: str | None, extra_quote_line: str | None) -> str:
     lines = [f"# [{topic['team']}] {topic['name']}", ""]
     if run_note:
@@ -142,12 +184,15 @@ def main() -> int:
     briefing_paths = []
     for topic in new_topics:
         extra_quote_line = None
-        match = market_data.find_mentioned_ticker(topic["name"])
-        if match:
-            name, _code = match
-            quote = market_data.get_stock_snapshot(name, run_ctx.data_date)
-            if quote and quote.adopted is not None:
-                extra_quote_line = quote.display_line()
+        if topic["team"] == "종목리포트":
+            _enforce_stock_report_figures(topic, run_ctx.data_date)
+        else:
+            match = market_data.find_mentioned_ticker(topic["name"])
+            if match:
+                name, _code = match
+                quote = market_data.get_stock_snapshot(name, run_ctx.data_date)
+                if quote and quote.adopted is not None:
+                    extra_quote_line = quote.display_line()
 
         content = _briefing_markdown(topic, run_note, extra_quote_line)
         path = BRIEFINGS_DIR / f"{date_str}-{topic['team']}.md"
