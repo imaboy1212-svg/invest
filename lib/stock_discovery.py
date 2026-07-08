@@ -1,9 +1,9 @@
 """종목리포트팀용 후보 종목 발굴.
 
-하드코딩 리스트 없이, 매일 아래 세 기준을 종합 판단해 후보를 뽑는다 (단일 기준 아님):
+하드코딩 리스트 없이, 매일 아래 기준을 종합 판단해 후보를 뽑는다 (단일 기준 아님):
 1) 거래대금 급증 (pykrx 거래대금 상위)
 2) 네이버증권 실시간 인기검색 종목
-3) 장마감 상승률 상위 (pykrx 등락률 상위)
+3) 장마감 등락률 상위 — 급등 + 급락 둘 다 포함 (pykrx 등락률 절대값 상위)
 
 세 기준 중 여러 개에 걸치거나 관련 뉴스가 있는 종목을 우선 선정한다.
 개별 소스 실패는 건너뛰고 계속 진행한다 (전체 파이프라인을 막지 않음).
@@ -63,10 +63,17 @@ def _top_by_trading_value(df) -> dict[str, str]:
     return {stock.get_market_ticker_name(code): code for code in top.index}
 
 
-def _top_by_price_change(df) -> dict[str, str]:
+def _top_gainers(df) -> dict[str, str]:
     if df.empty or "등락률" not in df.columns:
         return {}
     top = df.sort_values("등락률", ascending=False).head(TOP_N)
+    return {stock.get_market_ticker_name(code): code for code in top.index}
+
+
+def _top_losers(df) -> dict[str, str]:
+    if df.empty or "등락률" not in df.columns:
+        return {}
+    top = df.sort_values("등락률", ascending=True).head(TOP_N)
     return {stock.get_market_ticker_name(code): code for code in top.index}
 
 
@@ -102,7 +109,8 @@ def discover_candidates(data_date: date, news_headlines: list[str]) -> list[Stoc
 
     ohlcv_all = _market_ohlcv_all(data_date)
     _add(_top_by_trading_value(ohlcv_all), "거래대금 급증")
-    _add(_top_by_price_change(ohlcv_all), "상승률 상위")
+    _add(_top_gainers(ohlcv_all), "급등(상승률 상위)")
+    _add(_top_losers(ohlcv_all), "급락(하락률 상위)")
     _add(_naver_realtime_hot_stocks(), "네이버 실시간 인기검색")
 
     combined_headlines = " ".join(news_headlines)
