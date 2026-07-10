@@ -17,6 +17,7 @@ from lib import (
     calendar_utils,
     completed_topics,
     gemini_client,
+    ipo_calendar,
     market_data,
     news_crawler,
     stock_discovery,
@@ -179,11 +180,18 @@ def main() -> int:
     news_lines = [f"[{h.source}] {h.title}" for h in headlines]
     log_lines.append(f"[뉴스] 성공 언론사={succeeded_sources} 헤드라인 {len(headlines)}건")
 
-    stock_candidates = stock_discovery.discover_candidates(run_ctx.data_date, news_lines)
+    stock_candidates = stock_discovery.discover_candidates(run_ctx.data_date)
     stock_candidate_lines = [c.summary_line() for c in stock_candidates[:10]]
     log_lines.append(f"[종목발굴] 후보 {len(stock_candidates)}건 (상위: {stock_candidate_lines[:5]})")
+    for c in stock_candidates[:10]:
+        news_lines.extend(c.news_headlines)
 
-    raw_topics, rejected = gemini_client.generate_topics(run_note, index_lines, news_lines, stock_candidate_lines)
+    ipo_lines = ipo_calendar.get_ipo_schedule_lines()
+    log_lines.append(f"[IPO일정] {len(ipo_lines)}건 조회")
+
+    raw_topics, rejected = gemini_client.generate_topics(
+        run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines
+    )
     log_lines.append(f"[Gemini] 생성된 주제 {len(raw_topics)}건, 검증 실패 {len(rejected)}건")
     for r in rejected:
         log_lines.append(f"[검증실패] {r['team']} - {r['name']}: {r['reason']}")

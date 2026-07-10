@@ -71,6 +71,7 @@ def _build_prompt(
     index_lines: list[str],
     news_lines: list[str],
     stock_candidate_lines: list[str],
+    ipo_lines: list[str],
 ) -> str:
     context_lines = []
     if run_note:
@@ -83,7 +84,7 @@ def _build_prompt(
     else:
         context_lines.append("(뉴스 수집 실패 - 지수 데이터만 활용)")
     if stock_candidate_lines:
-        context_lines.append("[종목리포트 후보 종목 - 네이버증권 인기종목 중 뉴스 확인된 종목]")
+        context_lines.append("[종목리포트 후보 종목 - 네이버증권 인기종목 중 뉴스·공시 확인된 종목]")
         context_lines.extend(stock_candidate_lines)
         context_lines.append(
             "종목리포트 주제는 가능하면 위 후보 종목 중에서 고르되, 확인된 뉴스나 수치 근거가 "
@@ -91,6 +92,15 @@ def _build_prompt(
             "후보 종목이라도 관련 기사·공시가 실제로 없으면 억지로 종목리포트를 만들지 말고 "
             "그 팀은 비워라."
         )
+    if ipo_lines:
+        context_lines.append("[공모주 청약·상장 일정 - 네이버증권]")
+        context_lines.extend(ipo_lines)
+        context_lines.append(
+            "IPO 주제는 위 공모주 일정 중 앞으로 다가올 청약·상장 일정이 있는 종목을 골라 작성하라. "
+            "일정표에 없는 종목명·날짜·공모가는 만들지 마라."
+        )
+    else:
+        context_lines.append("[공모주 청약·상장 일정] 조회된 일정 없음 - IPO 주제는 만들지 마라.")
 
     return (
         "너는 증권 매체의 데스크다. 아래 확인된 지수/뉴스 데이터만 근거로 삼아 "
@@ -136,12 +146,14 @@ def generate_topics(
     index_lines: list[str],
     news_lines: list[str],
     stock_candidate_lines: list[str] | None = None,
+    ipo_lines: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """(검증 통과한 주제 목록, 검증 실패로 제외된 주제 목록[team/name/reason]) 반환."""
     stock_candidate_lines = stock_candidate_lines or []
+    ipo_lines = ipo_lines or []
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-    prompt = _build_prompt(run_note, index_lines, news_lines, stock_candidate_lines)
+    prompt = _build_prompt(run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines)
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
@@ -151,7 +163,7 @@ def generate_topics(
     data = json.loads(response.text)
     raw_topics = data.get("topics", [])
 
-    grounding_lines = index_lines + news_lines + stock_candidate_lines
+    grounding_lines = index_lines + news_lines + stock_candidate_lines + ipo_lines
     grounding_text = "\n".join(grounding_lines)
     grounding_numbers = _number_tokens(grounding_text)
 
