@@ -120,7 +120,14 @@ def _briefing_markdown(topic: dict, run_note: str | None, extra_quote_line: str 
     return "\n".join(lines)
 
 
-def _summary_message(run_ctx, index_snapshot, topics: list[dict], excluded: list[dict], news_failed: bool) -> str:
+def _summary_message(
+    run_ctx,
+    index_snapshot,
+    topics: list[dict],
+    excluded: list[dict],
+    news_failed: bool,
+    rejected_teams: set[str],
+) -> str:
     header = f"📊 WP투자 주제 후보 ({run_ctx.now_kst.strftime('%Y-%m-%d %H:%M')} 기준)"
     lines = [header, ""]
     if run_ctx.note:
@@ -135,7 +142,10 @@ def _summary_message(run_ctx, index_snapshot, topics: list[dict], excluded: list
     for team in TEAM_ORDER:
         topic = by_team.get(team)
         if not topic:
-            lines.append(f"[{team}] 확인된 수치 부족으로 이번 회차 미생성")
+            if team in rejected_teams:
+                lines.append(f"[{team}] 검증 실패로 제외됨 (원문에 없는 회사명·수치 감지)")
+            else:
+                lines.append(f"[{team}] 확인된 수치 부족으로 이번 회차 미생성")
             continue
         golden = " ⚡골든타임" if topic.get("golden_time") else ""
         first_figure = topic["key_figures"][0] if topic.get("key_figures") else None
@@ -173,8 +183,11 @@ def main() -> int:
     stock_candidate_lines = [c.summary_line() for c in stock_candidates[:10]]
     log_lines.append(f"[종목발굴] 후보 {len(stock_candidates)}건 (상위: {stock_candidate_lines[:5]})")
 
-    raw_topics = gemini_client.generate_topics(run_note, index_lines, news_lines, stock_candidate_lines)
-    log_lines.append(f"[Gemini] 생성된 주제 {len(raw_topics)}건")
+    raw_topics, rejected = gemini_client.generate_topics(run_note, index_lines, news_lines, stock_candidate_lines)
+    log_lines.append(f"[Gemini] 생성된 주제 {len(raw_topics)}건, 검증 실패 {len(rejected)}건")
+    for r in rejected:
+        log_lines.append(f"[검증실패] {r['team']} - {r['name']}: {r['reason']}")
+    rejected_teams = {r["team"] for r in rejected}
 
     new_topics, excluded = completed_topics.filter_new_topics(raw_topics)
     log_lines.append(f"[필터링] 신규 {len(new_topics)}건 / 완료주제 제외 {len(excluded)}건")
@@ -200,7 +213,7 @@ def main() -> int:
         briefing_paths.append(path)
     log_lines.append(f"[브리핑] 파일 {len(briefing_paths)}건 생성: {[p.name for p in briefing_paths]}")
 
-    summary = _summary_message(run_ctx, index_snapshot, new_topics, excluded, news_failed)
+    summary = _summary_message(run_ctx, index_snapshot, new_topics, excluded, news_failed, rejected_teams)
     telegram_client.send_message(summary)
     for path in briefing_paths:
         telegram_client.send_document(path)

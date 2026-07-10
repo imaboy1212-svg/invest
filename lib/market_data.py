@@ -148,6 +148,14 @@ def resolve_ticker_by_name(stock_name: str) -> str | None:
     return _ticker_name_map().get(stock_name)
 
 
+def ticker_map_available() -> bool:
+    """pykrx 종목명-코드 매핑이 정상적으로 로드됐는지 여부 (KRX 차단 등으로 실패하면 False)."""
+    try:
+        return bool(_ticker_name_map())
+    except Exception:
+        return False
+
+
 def get_stock_snapshot(stock_name: str, data_date: date) -> PriceQuote | None:
     code = resolve_ticker_by_name(stock_name)
     if code is None:
