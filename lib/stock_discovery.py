@@ -85,12 +85,15 @@ def _naver_stock_news(code: str) -> list[str]:
         print(f"[진단] 종목뉴스 요청/파싱 예외 (code={code}): {exc}")
         return []
 
-    # 응답 형태는 리스트 그대로거나 {"items": [...]}/{"list": [...]} 형태일 수 있음
+    # 실제 응답 형태: [{"total":N,"items":[{...}, ...]}] (날짜별 그룹 리스트).
+    # 그 외에 {"items":[...]}/{"list":[...]}/{"itemList":[{"items":[...]}]} 형태도 방어적으로 처리.
     if isinstance(data, list):
-        items = data
+        if data and isinstance(data[0], dict) and "items" in data[0]:
+            items = [i for group in data if isinstance(group, dict) for i in group.get("items", [])]
+        else:
+            items = data
     elif isinstance(data, dict):
         items = data.get("items") or data.get("list") or []
-        # 그룹핑된 형태({"itemList":[{"items":[...]}]}) 대응
         if not items and "itemList" in data:
             items = [i for group in data["itemList"] for i in group.get("items", [])]
     else:
