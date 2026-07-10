@@ -83,11 +83,13 @@ def _build_prompt(
     else:
         context_lines.append("(뉴스 수집 실패 - 지수 데이터만 활용)")
     if stock_candidate_lines:
-        context_lines.append("[종목리포트 후보 종목 - 거래대금/상승률/인기검색 종합, 점수 높은 순]")
+        context_lines.append("[종목리포트 후보 종목 - 네이버증권 인기종목 중 뉴스 확인된 종목]")
         context_lines.extend(stock_candidate_lines)
         context_lines.append(
             "종목리포트 주제는 가능하면 위 후보 종목 중에서 고르되, 확인된 뉴스나 수치 근거가 "
-            "있는 종목을 우선하라. 후보에 없어도 뉴스에 확실한 근거가 있는 종목이면 사용해도 된다."
+            "있는 종목을 우선하라. 후보에 없어도 뉴스에 확실한 근거가 있는 종목이면 사용해도 된다. "
+            "후보 종목이라도 관련 기사·공시가 실제로 없으면 억지로 종목리포트를 만들지 말고 "
+            "그 팀은 비워라."
         )
 
     return (

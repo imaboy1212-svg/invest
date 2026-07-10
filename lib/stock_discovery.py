@@ -1,25 +1,25 @@
 """종목리포트팀용 후보 종목 발굴.
 
-하드코딩 리스트 없이, 매일 아래 기준을 종합 판단해 후보를 뽑는다 (단일 기준 아님):
-1) 거래대금 급증 (pykrx 거래대금 상위)
-2) 네이버증권 실시간 인기검색 종목
-3) 장마감 등락률 상위 — 급등 + 급락 둘 다 포함 (pykrx 등락률 절대값 상위)
+하드코딩 리스트 없이, 네이버증권 코스피·코스닥 인기종목 중 실제 뉴스/이슈가 있는
+종목만 후보로 남긴다. 뉴스가 없는 인기종목은 억지로 주제화하지 않고 후보에서 뺀다
+(가이드 4-4 원칙: 확인 안 되면 만들지 않는다).
 
-세 기준 중 여러 개에 걸치거나 관련 뉴스가 있는 종목을 우선 선정한다.
-개별 소스 실패는 건너뛰고 계속 진행한다 (전체 파이프라인을 막지 않음).
+이전에는 pykrx 거래대금/등락률 상위를 추가 기준으로 같이 썼으나, 이 실행 환경에서
+KRX가 pykrx의 직접 조회를 계속 차단해 해당 기준이 실제로는 단 한 번도 후보를
+채우지 못했다 (매 실행 로그에서 항상 빈 결과). 조건을 여러 개 겹쳐서 오히려 발굴이
+까다로워지는 문제가 있어, 실제로 동작하는 네이버 인기종목 하나로 단순화했다.
+
+완료 주제(같은 종목 재추천 금지)는 completed_topics.json의 이름 매칭으로
+후속 단계(completed_topics.filter_new_topics)에서 걸러진다.
 """
 
 from dataclasses import dataclass, field
 from datetime import date
 
-import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from pykrx import stock
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
-TOP_N = 15
-NEWS_BONUS = 2
 
 
 @dataclass
@@ -27,58 +27,14 @@ class StockCandidate:
     name: str
     code: str
     reasons: list[str] = field(default_factory=list)
-    has_news: bool = False
-
-    @property
-    def score(self) -> int:
-        return len(self.reasons) + (NEWS_BONUS if self.has_news else 0)
+    has_news: bool = True  # 이 함수가 반환하는 후보는 전부 뉴스가 확인된 것만이다
 
     def summary_line(self) -> str:
-        tags = list(self.reasons)
-        if self.has_news:
-            tags.append("뉴스 있음")
-        return f"{self.name} ({', '.join(tags)})"
+        return f"{self.name} (네이버 인기종목, 뉴스 있음)"
 
 
-def _market_ohlcv_all(data_date: date) -> pd.DataFrame:
-    """KOSPI+KOSDAQ 전체 종목의 당일 OHLCV(거래대금/등락률 포함)를 합쳐서 반환. 실패 시 빈 DataFrame."""
-    date_str = data_date.strftime("%Y%m%d")
-    frames = []
-    for market in ("KOSPI", "KOSDAQ"):
-        try:
-            df = stock.get_market_ohlcv_by_ticker(date_str, market=market)
-            if not df.empty:
-                frames.append(df)
-        except Exception:
-            continue
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames)
-
-
-def _top_by_trading_value(df) -> dict[str, str]:
-    if df.empty or "거래대금" not in df.columns:
-        return {}
-    top = df.sort_values("거래대금", ascending=False).head(TOP_N)
-    return {stock.get_market_ticker_name(code): code for code in top.index}
-
-
-def _top_gainers(df) -> dict[str, str]:
-    if df.empty or "등락률" not in df.columns:
-        return {}
-    top = df.sort_values("등락률", ascending=False).head(TOP_N)
-    return {stock.get_market_ticker_name(code): code for code in top.index}
-
-
-def _top_losers(df) -> dict[str, str]:
-    if df.empty or "등락률" not in df.columns:
-        return {}
-    top = df.sort_values("등락률", ascending=True).head(TOP_N)
-    return {stock.get_market_ticker_name(code): code for code in top.index}
-
-
-def _naver_realtime_hot_stocks() -> dict[str, str]:
-    """네이버증권 실시간 인기검색 종목. 장 운영시간 외/주말엔 비어있을 수 있다."""
+def _naver_popular_stocks() -> dict[str, str]:
+    """네이버증권 코스피·코스닥 인기종목(실시간 인기검색). 장 운영시간 외/주말엔 비어있을 수 있다."""
     try:
         resp = requests.get(
             "https://finance.naver.com/sise/lastsearch2.naver", headers=_HEADERS, timeout=10
@@ -99,23 +55,12 @@ def _naver_realtime_hot_stocks() -> dict[str, str]:
 
 
 def discover_candidates(data_date: date, news_headlines: list[str]) -> list[StockCandidate]:
-    candidates: dict[str, StockCandidate] = {}
-
-    def _add(name_to_code: dict[str, str], reason: str) -> None:
-        for name, code in name_to_code.items():
-            if name not in candidates:
-                candidates[name] = StockCandidate(name=name, code=code)
-            candidates[name].reasons.append(reason)
-
-    ohlcv_all = _market_ohlcv_all(data_date)
-    _add(_top_by_trading_value(ohlcv_all), "거래대금 급증")
-    _add(_top_gainers(ohlcv_all), "급등(상승률 상위)")
-    _add(_top_losers(ohlcv_all), "급락(하락률 상위)")
-    _add(_naver_realtime_hot_stocks(), "네이버 실시간 인기검색")
-
+    """네이버 인기종목 중 뉴스에 이름이 언급된 종목만 순위 그대로 반환한다."""
     combined_headlines = " ".join(news_headlines)
-    for candidate in candidates.values():
-        if candidate.name in combined_headlines:
-            candidate.has_news = True
 
-    return sorted(candidates.values(), key=lambda c: c.score, reverse=True)
+    candidates = []
+    for name, code in _naver_popular_stocks().items():
+        if name in combined_headlines:
+            candidates.append(StockCandidate(name=name, code=code))
+
+    return candidates
