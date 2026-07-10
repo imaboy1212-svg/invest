@@ -64,36 +64,53 @@ def _naver_popular_stocks() -> dict[str, str]:
 
 
 def _naver_stock_news(code: str) -> list[str]:
-    """네이버증권 개별 종목 뉴스·공시 목록. 실패/없음이면 빈 리스트."""
+    """네이버증권 개별 종목 뉴스·공시 목록. 실패/없음이면 빈 리스트.
+
+    finance.naver.com/item/news_news.naver 는 실제로는 AI 뉴스클러스터링 위젯을
+    서버 렌더링만 해두고(빈 검색어로 '뉴스 없음' 문구만 나옴) 실데이터는 JS로
+    다시 불러오는 페이지라 정적 파싱이 불가능했다. 대신 네이버 모바일증권이
+    쓰는 JSON API(m.stock.naver.com)를 직접 호출한다.
+    """
     try:
         resp = requests.get(
-            f"https://finance.naver.com/item/news_news.naver?code={code}&page=1",
+            f"https://m.stock.naver.com/api/news/stock/{code}",
             headers=_HEADERS,
+            params={"pageSize": NEWS_PER_STOCK, "page": 1},
             timeout=10,
         )
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding
-        soup = BeautifulSoup(resp.text, "lxml")
-    except Exception:
+        raw_text = resp.text
+        data = resp.json()
+    except Exception as exc:
+        print(f"[진단] 종목뉴스 요청/파싱 예외 (code={code}): {exc}")
         return []
 
+    # 응답 형태는 리스트 그대로거나 {"items": [...]}/{"list": [...]} 형태일 수 있음
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("items") or data.get("list") or []
+        # 그룹핑된 형태({"itemList":[{"items":[...]}]}) 대응
+        if not items and "itemList" in data:
+            items = [i for group in data["itemList"] for i in group.get("items", [])]
+    else:
+        items = []
+
     headlines = []
-    for row in soup.select("table.type5 tr"):
-        title_tag = row.select_one("td.title a") or row.select_one("td.title")
-        if not title_tag:
+    for item in items:
+        if not isinstance(item, dict):
             continue
-        title = title_tag.get_text(strip=True)
+        title = item.get("title") or item.get("subtitle") or ""
+        title = BeautifulSoup(title, "lxml").get_text(strip=True) if title else ""
         if not title:
             continue
-        source_tag = row.select_one("td.info")
-        source = source_tag.get_text(strip=True) if source_tag else "네이버증권"
+        source = item.get("officeName") or item.get("office") or "네이버증권"
         headlines.append(f"[{source}] {title}")
         if len(headlines) >= NEWS_PER_STOCK:
             break
 
     if not headlines:
-        sample_text = soup.get_text(" ", strip=True)[:200]
-        print(f"[진단] 종목뉴스 0건 (code={code}): {sample_text}")
+        print(f"[진단] 종목뉴스 0건 (code={code}): {raw_text[:200]}")
     return headlines
 
 
