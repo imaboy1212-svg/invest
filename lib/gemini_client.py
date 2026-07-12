@@ -164,6 +164,48 @@ def _verify_topic(topic: dict, grounding_text: str, grounding_numbers: set[str])
     return None
 
 
+_TOPIC_ITEM_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "team": {"type": "STRING"},
+        "name": {"type": "STRING"},
+        "golden_time": {"type": "BOOLEAN"},
+        "reason": {"type": "STRING"},
+        "key_figures": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"figure": {"type": "STRING"}, "source": {"type": "STRING"}},
+                "required": ["figure", "source"],
+            },
+        },
+        "related_news": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"headline": {"type": "STRING"}, "source": {"type": "STRING"}},
+                "required": ["headline", "source"],
+            },
+        },
+        "article_structure": {
+            "type": "OBJECT",
+            "properties": {
+                "intro_angle": {"type": "STRING"},
+                "body_points": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+            "required": ["intro_angle", "body_points"],
+        },
+    },
+    "required": ["team", "name", "golden_time", "reason", "key_figures", "related_news", "article_structure"],
+}
+
+_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"topics": {"type": "ARRAY", "items": _TOPIC_ITEM_SCHEMA}},
+    "required": ["topics"],
+}
+
+
 def generate_topics(
     run_note: str | None,
     index_lines: list[str],
@@ -172,7 +214,12 @@ def generate_topics(
     ipo_lines: list[str] | None = None,
     global_lines: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """(검증 통과한 주제 목록, 검증 실패로 제외된 주제 목록[team/name/reason]) 반환."""
+    """(검증 통과한 주제 목록, 검증 실패로 제외된 주제 목록[team/name/reason]) 반환.
+
+    Gemini 응답이 길어질수록(분량 확대 지시) JSON이 깨질 위험이 커져서,
+    response_schema로 구조를 강제(controlled generation)한다. 그래도 파싱이
+    실패하면 파이프라인을 죽이지 않고 이번 회차 주제 0건으로 처리한다.
+    """
     stock_candidate_lines = stock_candidate_lines or []
     ipo_lines = ipo_lines or []
     global_lines = global_lines or []
@@ -182,11 +229,18 @@ def generate_topics(
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=_RESPONSE_SCHEMA,
+        ),
     )
 
-    data = json.loads(response.text)
-    raw_topics = data.get("topics", [])
+    try:
+        data = json.loads(response.text)
+        raw_topics = data.get("topics", [])
+    except (json.JSONDecodeError, AttributeError) as exc:
+        print(f"[Gemini응답파싱실패] {type(exc).__name__}: {exc} / 응답 앞부분: {str(response.text)[:300]!r}")
+        raw_topics = []
 
     grounding_lines = index_lines + news_lines + stock_candidate_lines + ipo_lines + global_lines
     grounding_text = "\n".join(grounding_lines)
