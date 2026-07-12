@@ -48,11 +48,20 @@ def _build_run_note(run_ctx) -> str | None:
     return run_ctx.note
 
 
-def _enforce_stock_report_figures(topic: dict, data_date) -> None:
-    """종목리포트 key_figures를 해당 종목 고유 수치로 강제한다.
+_INDEX_WORDS = ("코스피", "코스닥", "KOSPI", "KOSDAQ")
 
-    Gemini가 지수(코스피/코스닥) 수치를 종목리포트 key_figures에 섞어 넣는 문제가 있어,
-    지수 언급 항목은 제거하고 pykrx 실측 수급/시총 데이터를 우선 채운다.
+
+def _strip_index_mentions(text: str) -> bool:
+    """텍스트에 지수 언급이 있으면 True (종목리포트에서 제외 판단용)."""
+    return any(word in text for word in _INDEX_WORDS)
+
+
+def _enforce_stock_report_figures(topic: dict, data_date) -> None:
+    """종목리포트에서 지수(코스피/코스닥) 언급을 완전히 배제하고 종목 자체 심층 수치로 채운다.
+
+    Gemini가 지수 수치를 종목리포트에 섞어 넣는 문제가 있어, key_figures뿐 아니라
+    서론/본론/추천사유에서도 지수 언급 항목을 제거하고, pykrx 실측 수급/밸류에이션
+    데이터를 최대한 채운다 (등락률, 외국인/기관 순매수, 시가총액, PER/PBR/EPS).
     """
     confirmed_figures = []
     match = market_data.find_mentioned_ticker(topic["name"])
@@ -81,13 +90,25 @@ def _enforce_stock_report_figures(topic: dict, data_date) -> None:
                 "figure": f"{name} 시가총액 {supplementary.market_cap:,.0f}원",
                 "source": "pykrx",
             })
+        if supplementary.per is not None:
+            confirmed_figures.append({"figure": f"{name} PER {supplementary.per:.2f}배", "source": "pykrx"})
+        if supplementary.pbr is not None:
+            confirmed_figures.append({"figure": f"{name} PBR {supplementary.pbr:.2f}배", "source": "pykrx"})
+        if supplementary.eps is not None:
+            confirmed_figures.append({"figure": f"{name} EPS {supplementary.eps:,.0f}원", "source": "pykrx"})
 
     filtered_gemini_figures = [
-        kf for kf in topic.get("key_figures", [])
-        if "코스피" not in kf.get("figure", "") and "코스닥" not in kf.get("figure", "")
+        kf for kf in topic.get("key_figures", []) if not _strip_index_mentions(kf.get("figure", ""))
     ]
+    topic["key_figures"] = (confirmed_figures + filtered_gemini_figures)[:10]
 
-    topic["key_figures"] = (confirmed_figures + filtered_gemini_figures)[:5]
+    structure = topic.get("article_structure", {})
+    if _strip_index_mentions(structure.get("intro_angle", "")):
+        structure["intro_angle"] = ""
+    structure["body_points"] = [
+        point for point in structure.get("body_points", []) if not _strip_index_mentions(point)
+    ]
+    topic["article_structure"] = structure
 
 
 def _briefing_markdown(topic: dict, run_note: str | None, extra_quote_line: str | None) -> str:
@@ -175,9 +196,14 @@ def main() -> int:
     index_lines = [q.display_line() for q in index_snapshot.values()]
     log_lines.append("[지수] " + " | ".join(index_lines))
 
+    global_lines = market_data.get_global_market_lines()
+    log_lines.append(f"[해외지수] {len(global_lines)}건 조회")
+
     headlines, succeeded_sources = news_crawler.collect_headlines()
     news_failed = len(succeeded_sources) == 0
-    news_lines = [f"[{h.source}] {h.title}" for h in headlines]
+    news_lines = [
+        f"[{h.source}] {h.title}" + (f" - {h.summary}" if h.summary else "") for h in headlines
+    ]
     log_lines.append(f"[뉴스] 성공 언론사={succeeded_sources} 헤드라인 {len(headlines)}건")
 
     stock_candidates = stock_discovery.discover_candidates(run_ctx.data_date)
@@ -190,7 +216,7 @@ def main() -> int:
     log_lines.append(f"[IPO일정] {len(ipo_lines)}건 조회")
 
     raw_topics, rejected = gemini_client.generate_topics(
-        run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines
+        run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines, global_lines
     )
     log_lines.append(f"[Gemini] 생성된 주제 {len(raw_topics)}건, 검증 실패 {len(rejected)}건")
     for r in rejected:

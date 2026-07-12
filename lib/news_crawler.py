@@ -21,6 +21,7 @@ _HEADERS = {"User-Agent": "Mozilla/5.0"}
 MIN_HEADLINE_LEN = 8
 MAX_HEADLINES_PER_SITE = 10
 MIN_SOURCES_REQUIRED = 2
+SUMMARY_LIMIT_PER_SITE = 8  # 기사 본문 요약(og:description)을 가져올 헤드라인 수 상한 (전체 요청 시간 제한용)
 
 # 네이버증권 뉴스: 여러 언론사 기사를 한 페이지에 모아두는 아그리게이터.
 # 개별 기사 언론사명은 각 항목의 .press 클래스에서 뽑아내고, 못 찾으면 "네이버증권"으로 표시한다.
@@ -60,6 +61,30 @@ class Headline:
     source: str
     title: str
     url: str
+    summary: str = ""
+
+
+def _fetch_article_summary(url: str) -> str:
+    """기사 페이지의 og:description(또는 description) 메타 태그로 본문 요약을 가져온다.
+
+    대부분의 국내 뉴스 사이트가 SEO용으로 이 메타 태그에 기사 리드문단 요약을 넣어두므로,
+    본문 전체를 파싱하는 것보다 훨씬 안정적이다. 실패하면 빈 문자열(제목만 사용).
+    """
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=6)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+        tag = soup.select_one('meta[property="og:description"]') or soup.select_one('meta[name="description"]')
+        if tag and tag.get("content"):
+            return tag["content"].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _attach_summaries(headlines: list[Headline]) -> None:
+    for headline in headlines[:SUMMARY_LIMIT_PER_SITE]:
+        headline.summary = _fetch_article_summary(headline.url)
 
 
 def _crawl_naver_finance(site: dict) -> list[Headline]:
@@ -98,6 +123,7 @@ def _crawl_naver_finance(site: dict) -> list[Headline]:
 
     if not headlines:
         print(f"[진단] {site['name']} href 샘플(텍스트 8자 이상, 최대 15개): {all_hrefs_with_text[:15]}")
+    _attach_summaries(headlines)
     return headlines
 
 
@@ -129,6 +155,7 @@ def _crawl_press_site(site: dict) -> list[Headline]:
 
     if not headlines:
         print(f"[진단] {site['name']} href 샘플(텍스트 8자 이상, 최대 15개): {all_hrefs_with_text[:15]}")
+    _attach_summaries(headlines)
     return headlines
 
 

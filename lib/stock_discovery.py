@@ -25,7 +25,7 @@ import requests
 from bs4 import BeautifulSoup
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
-NEWS_PER_STOCK = 5
+NEWS_PER_STOCK = 8
 
 
 @dataclass

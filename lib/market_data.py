@@ -105,6 +105,27 @@ def get_index_snapshot(data_date: date) -> dict[str, PriceQuote]:
     return result
 
 
+_GLOBAL_YAHOO_TICKERS = {
+    "S&P500": "^GSPC",
+    "나스닥": "^IXIC",
+    "다우존스": "^DJI",
+    "원/달러 환율": "KRW=X",
+    "WTI 유가": "CL=F",
+}
+
+
+def get_global_market_lines() -> list[str]:
+    """마켓칼럼용 해외 지수·환율·유가 스냅샷. Yahoo Finance 단일 소스, 실패한 항목은 건너뛴다."""
+    lines = []
+    for label, ticker in _GLOBAL_YAHOO_TICKERS.items():
+        try:
+            price, pct = _fetch_yahoo_quote(ticker)
+        except Exception:
+            continue
+        lines.append(f"{label} {price:,.2f} ({pct:+.2f}%) (출처: Yahoo)")
+    return lines
+
+
 def _fetch_naver_index(naver_code: str) -> tuple[float, float]:
     url = f"https://finance.naver.com/sise/sise_index.naver?code={naver_code}"
     resp = requests.get(url, headers=_HEADERS, timeout=10)
@@ -212,6 +233,9 @@ class SupplementaryData:
     institution_net_buy: float | None = None
     market_cap: float | None = None
     trading_value: float | None = None
+    per: float | None = None
+    pbr: float | None = None
+    eps: float | None = None
 
 
 def find_mentioned_ticker(text: str) -> tuple[str, str] | None:
@@ -261,5 +285,17 @@ def get_supplementary_data(stock_name: str, data_date: date) -> SupplementaryDat
             supplementary.trading_value = float(ohlcv_df.iloc[-1]["거래대금"])
     except Exception:
         pass
+
+    for market in ("KOSPI", "KOSDAQ"):
+        try:
+            fundamental_df = stock.get_market_fundamental_by_ticker(date_str, market=market)
+            if not fundamental_df.empty and code in fundamental_df.index:
+                row = fundamental_df.loc[code]
+                supplementary.per = float(row.get("PER")) if row.get("PER") else None
+                supplementary.pbr = float(row.get("PBR")) if row.get("PBR") else None
+                supplementary.eps = float(row.get("EPS")) if row.get("EPS") else None
+                break
+        except Exception:
+            continue
 
     return supplementary

@@ -36,33 +36,43 @@ _RESPONSE_SCHEMA_HINT = """
         {"headline": "관련 뉴스 헤드라인", "source": "언론사"}
       ],
       "article_structure": {
-        "intro_angle": "서론 각도 1줄",
-        "body_points": ["본론에서 다룰 관점 1", "본론에서 다룰 관점 2"]
+        "intro_angle": "서론 각도 2~3문장",
+        "body_points": ["본론에서 다룰 관점 1", "본론에서 다룰 관점 2", "..."]
       }
     }
   ]
 }
-key_figures는 3~5개, related_news는 2~3개로 채워라.
+분량 기준 (기존 대비 2배 이상으로 훨씬 풍부하게 채울 것):
+- key_figures는 6~10개
+- related_news는 4~6개
+- article_structure.body_points는 4~6개, 각 항목은 구체적인 분석 관점을 2~3문장으로
+- reason(추천 사유)도 1줄이 아니라 2~3문장으로 왜 지금 이 주제가 중요한지 상세히 서술
 확인된 수치·뉴스가 부족해 특정 팀(종목리포트/마켓칼럼/IPO) 주제를 만들 수 없으면
-그 팀은 topics 배열에서 아예 제외하라. 존재하지 않는 수치나 뉴스를 지어내지 마라.
+그 팀은 topics 배열에서 아예 제외하라. 분량을 채우려고 존재하지 않는 수치나 뉴스를
+지어내는 것보다는, 확인 가능한 범위 안에서 최대한 깊이 있게 다루는 쪽을 우선하라.
 
-중요 — 팀별 key_figures 구분 규칙:
-- '종목리포트' team의 key_figures는 반드시 해당 개별 종목 자체에 대한 수치만 넣어라
-  (그 종목의 등락률, 거래대금, 수급, 시가총액, 실적 등). 코스피/코스닥 지수 수치는
-  '종목리포트' key_figures에 절대 넣지 마라.
-- 코스피/코스닥 지수 수치는 '마켓칼럼' team의 key_figures에서만 사용하라.
-- '종목리포트'의 서론/본론에서 지수 급락 등 시장 전체 상황을 배경으로 언급하는 것은
-  괜찮지만, key_figures 항목 자체는 그 종목 고유 수치로만 채워야 한다.
+중요 — 팀별 key_figures/내용 구분 규칙:
+- '종목리포트' team은 지수(코스피/코스닥) 얘기를 전혀 하지 마라. key_figures는 물론이고
+  intro_angle, body_points, reason 어디에도 코스피/코스닥 언급을 넣지 마라. 시장 전체
+  상황을 배경으로 쓰지 말고, 오직 그 종목 자체(등락률, 거래대금, 수급, 시가총액, PER/PBR,
+  실적, 최근 뉴스·공시, 사업 배경 등)에만 집중해 심층적으로 써라.
+- 코스피/코스닥 지수, 해외 지수(S&P500/나스닥/다우), 환율, 유가 등 시장 전체·국제 정세
+  데이터는 '마켓칼럼' team에서만 사용하라. 마켓칼럼은 국내 지수뿐 아니라 아래 제공된
+  [해외 지수·환율·유가 현황]과 국제 정세 관련 뉴스가 있으면 적극 반영해서 국내외 시장
+  흐름을 종합적으로 분석하라.
 
 절대 규칙 — 원문 밖 내용 생성 금지 (환각 금지):
-- related_news의 headline은 아래 제공된 [증권 뉴스 헤드라인] 목록에 있는 헤드라인을
-  그대로(글자 단위로 동일하게) 옮겨 적어라. 문장을 다듬거나 요약하거나 새로 만들지 마라.
-- key_figures, name, reason에 들어가는 회사명·금액·비율·계약규모 등 모든 숫자와
-  고유명사는 반드시 아래 제공된 원문([지수 현황]/[증권 뉴스 헤드라인]/[종목리포트 후보
-  종목])에 등장하는 것만 사용하라. 원문에 없는 회사명, 금액, 수치는 절대로 만들어내지
+- 제공된 뉴스 목록의 각 줄은 "[언론사] 제목 - 요약" 형식이다. related_news의 headline에는
+  " - 요약" 부분을 빼고 "[언론사] 제목" 부분만 글자 단위로 동일하게 옮겨 적어라. 문장을
+  다듬거나 요약하거나 새로 만들지 마라. 뒤에 붙은 "- 요약" 내용은 key_figures나
+  intro_angle/body_points를 더 풍부하고 구체적으로 쓰는 데 참고 자료로만 사용하고,
+  숫자·회사명은 아래 규칙을 반드시 지켜라.
+- key_figures, name, reason, intro_angle, body_points에 들어가는 회사명·금액·비율·
+  계약규모 등 모든 숫자와 고유명사는 반드시 아래 제공된 원문(지수/뉴스/종목후보/IPO일정/
+  해외지수)에 등장하는 것만 사용하라. 원문에 없는 회사명, 금액, 수치는 절대로 만들어내지
   마라 (예: 헤드라인에 언급되지 않은 계약 상대방 회사명을 지어내는 것 금지).
 - 원문만으로 특정 수치나 이름을 확인할 수 없으면, 그 항목은 비워두거나 "확인 필요"라고
-  적어라. 그럴듯하게 추정해서 채우지 마라.
+  적어라. 분량을 채우기 위해 그럴듯하게 추정해서 채우지 마라.
 """
 
 
@@ -72,12 +82,16 @@ def _build_prompt(
     news_lines: list[str],
     stock_candidate_lines: list[str],
     ipo_lines: list[str],
+    global_lines: list[str],
 ) -> str:
     context_lines = []
     if run_note:
         context_lines.append(f"[실행 기준] {run_note}")
     context_lines.append("[지수 현황]")
     context_lines.extend(index_lines)
+    if global_lines:
+        context_lines.append("[해외 지수·환율·유가 현황 - 마켓칼럼 전용]")
+        context_lines.extend(global_lines)
     context_lines.append("[증권 뉴스 헤드라인]")
     if news_lines:
         context_lines.extend(news_lines)
@@ -128,11 +142,20 @@ def _verify_topic(topic: dict, grounding_text: str, grounding_numbers: set[str])
         if headline and headline not in grounding_text:
             return f"관련 뉴스 헤드라인이 원문에 없음: {headline!r}"
 
-    for kf in topic.get("key_figures", []):
-        figure_text = kf.get("figure", "")
-        for number in _number_tokens(figure_text):
+    text_fields = [kf.get("figure", "") for kf in topic.get("key_figures", [])]
+    text_fields.append(topic.get("reason", ""))
+    structure = topic.get("article_structure", {})
+    text_fields.append(structure.get("intro_angle", ""))
+    text_fields.extend(structure.get("body_points", []))
+
+    for field_text in text_fields:
+        for number in _number_tokens(field_text):
             if number not in grounding_numbers:
-                return f"핵심 수치의 숫자가 원문에 없음: {number!r} (수치 설명: {figure_text!r})"
+                return f"수치가 원문에 없음: {number!r} (내용: {field_text!r})"
+
+    # 종목리포트의 지수(코스피/코스닥) 언급은 여기서 거부하지 않는다 — 검증 실패로 전체
+    # 주제를 버리기보다, topic_recommender._enforce_stock_report_figures가 해당 부분만
+    # 제거하고 나머지 심층 내용은 살리는 쪽이 분량/품질에 유리하다.
 
     if topic.get("team") == "종목리포트" and market_data.ticker_map_available():
         if market_data.find_mentioned_ticker(topic.get("name", "")) is None:
@@ -147,13 +170,15 @@ def generate_topics(
     news_lines: list[str],
     stock_candidate_lines: list[str] | None = None,
     ipo_lines: list[str] | None = None,
+    global_lines: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """(검증 통과한 주제 목록, 검증 실패로 제외된 주제 목록[team/name/reason]) 반환."""
     stock_candidate_lines = stock_candidate_lines or []
     ipo_lines = ipo_lines or []
+    global_lines = global_lines or []
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-    prompt = _build_prompt(run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines)
+    prompt = _build_prompt(run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines, global_lines)
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
@@ -163,7 +188,7 @@ def generate_topics(
     data = json.loads(response.text)
     raw_topics = data.get("topics", [])
 
-    grounding_lines = index_lines + news_lines + stock_candidate_lines + ipo_lines
+    grounding_lines = index_lines + news_lines + stock_candidate_lines + ipo_lines + global_lines
     grounding_text = "\n".join(grounding_lines)
     grounding_numbers = _number_tokens(grounding_text)
 
