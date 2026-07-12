@@ -6,6 +6,7 @@
 6) 브리핑 마크다운 파일 생성  7) 텔레그램 전송
 """
 
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -127,7 +128,10 @@ def _briefing_markdown(topic: dict, run_note: str | None, extra_quote_line: str 
 
     lines.append("## 관련 뉴스")
     for news in topic.get("related_news", []):
-        lines.append(f"- [{news['source']}] {news['headline']}")
+        # Gemini가 headline에 "[언론사] 제목"을 통째로 넣어 source와 중복 표기되는 경우가
+        # 있어, 앞의 대괄호 태그를 방어적으로 제거한다.
+        headline = re.sub(r"^\[[^\]]+\]\s*", "", news["headline"])
+        lines.append(f"- [{news['source']}] {headline}")
     lines.append("")
 
     structure = topic.get("article_structure", {})
