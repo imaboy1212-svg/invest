@@ -177,8 +177,9 @@ def ticker_map_available() -> bool:
         return False
 
 
-def get_stock_snapshot(stock_name: str, data_date: date) -> PriceQuote | None:
-    code = resolve_ticker_by_name(stock_name)
+def get_stock_snapshot(stock_name: str, data_date: date, code: str | None = None) -> PriceQuote | None:
+    """code를 직접 넘기면 pykrx 종목명 매핑(KRX 차단으로 자주 실패)을 건너뛰고 바로 조회한다."""
+    code = code or resolve_ticker_by_name(stock_name)
     if code is None:
         return None
 
@@ -254,10 +255,13 @@ def find_mentioned_ticker(text: str) -> tuple[str, str] | None:
     return None
 
 
-def get_supplementary_data(stock_name: str, data_date: date) -> SupplementaryData:
-    """외국인/기관 순매수, 시가총액, 거래대금. 실패해도 None으로 채워 파이프라인을 막지 않는다."""
+def get_supplementary_data(stock_name: str, data_date: date, code: str | None = None) -> SupplementaryData:
+    """외국인/기관 순매수, 시가총액, 거래대금. 실패해도 None으로 채워 파이프라인을 막지 않는다.
+
+    code를 직접 넘기면 pykrx 종목명 매핑(KRX 차단으로 자주 실패)을 건너뛴다.
+    """
     supplementary = SupplementaryData()
-    code = resolve_ticker_by_name(stock_name)
+    code = code or resolve_ticker_by_name(stock_name)
     if code is None:
         return supplementary
 

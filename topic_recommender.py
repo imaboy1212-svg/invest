@@ -58,18 +58,31 @@ def _strip_index_mentions(text: str) -> bool:
     return any(word in text for word in _INDEX_WORDS)
 
 
-def _enforce_stock_report_figures(topic: dict, data_date) -> None:
+def _match_known_code(text: str, known_codes: dict[str, str]) -> tuple[str, str] | None:
+    """known_codes(네이버에서 이미 확보한 종목명→코드) 중 text에 등장하는 가장 긴 이름을 찾는다."""
+    for name in sorted(known_codes, key=len, reverse=True):
+        if len(name) >= 2 and name in text:
+            return name, known_codes[name]
+    return None
+
+
+def _enforce_stock_report_figures(topic: dict, data_date, known_codes: dict[str, str]) -> None:
     """종목리포트에서 지수(코스피/코스닥) 언급을 완전히 배제하고 종목 자체 심층 수치로 채운다.
 
     Gemini가 지수 수치를 종목리포트에 섞어 넣는 문제가 있어, key_figures뿐 아니라
     서론/본론/추천사유에서도 지수 언급 항목을 제거하고, pykrx 실측 수급/밸류에이션
     데이터를 최대한 채운다 (등락률, 외국인/기관 순매수, 시가총액, PER/PBR/EPS).
+
+    종목코드는 가능하면 known_codes(네이버 인기종목 발굴 단계에서 이미 확보한 코드)를
+    우선 쓴다. pykrx 종목명→코드 매핑은 이 실행 환경에서 KRX가 계속 차단해 실패하는
+    경우가 많아서, 그 경우 가격 조회 자체가 안 돼 Gemini가 뉴스 헤드라인에 있던
+    (문맥이 잘린) 숫자를 대신 써버리는 문제가 실제로 발생했다.
     """
     confirmed_figures = []
-    match = market_data.find_mentioned_ticker(topic["name"])
+    match = _match_known_code(topic["name"], known_codes) or market_data.find_mentioned_ticker(topic["name"])
     if match:
-        name, _code = match
-        quote = market_data.get_stock_snapshot(name, data_date)
+        name, code = match
+        quote = market_data.get_stock_snapshot(name, data_date, code=code)
         if quote and quote.adopted is not None:
             # 소스 하나만 조용히 채택해서 보여주면 스크래핑 오류로 가격이 틀려도 알아챌 수
             # 없다. 지수와 동일하게 KRX/네이버/Yahoo 값을 전부 보여줘서 코로 님이 직접
@@ -81,8 +94,10 @@ def _enforce_stock_report_figures(topic: dict, data_date) -> None:
                     f"[가격불일치] {name}: KRX={quote.krx} 네이버={quote.naver} "
                     f"Yahoo={quote.yahoo} (5% 이상 차이 — 스크래핑 오류 가능성)"
                 )
+        else:
+            print(f"[가격조회실패] {name}({code}): KRX/네이버/Yahoo 전부 조회 실패, 핵심 수치에서 가격 항목 제외됨")
 
-        supplementary = market_data.get_supplementary_data(name, data_date)
+        supplementary = market_data.get_supplementary_data(name, data_date, code=code)
         if supplementary.foreign_net_buy is not None:
             confirmed_figures.append({
                 "figure": f"{name} 외국인 순매수 {supplementary.foreign_net_buy:,.0f}",
@@ -221,6 +236,7 @@ def main() -> int:
     log_lines.append(f"[최근종목] 쿨다운 중({recent_picks.COOLDOWN_DAYS}일) 제외 대상: {sorted(recent_stock_names)}")
 
     stock_candidates = stock_discovery.discover_candidates(run_ctx.data_date, recent_stock_names)
+    known_codes = {c.name: c.code for c in stock_candidates}
     stock_candidate_lines = [c.summary_line() for c in stock_candidates[:10]]
     log_lines.append(f"[종목발굴] 후보 {len(stock_candidates)}건 (상위: {stock_candidate_lines[:5]})")
     for c in stock_candidates[:10]:
@@ -246,16 +262,20 @@ def main() -> int:
     for topic in new_topics:
         extra_quote_line = None
         if topic["team"] == "종목리포트":
-            _enforce_stock_report_figures(topic, run_ctx.data_date)
-            match = market_data.find_mentioned_ticker(topic["name"])
+            _enforce_stock_report_figures(topic, run_ctx.data_date, known_codes)
+            match = _match_known_code(topic["name"], known_codes) or market_data.find_mentioned_ticker(
+                topic["name"]
+            )
             if match:
                 recent_picks.record_pick(match[0], run_ctx.data_date)
                 log_lines.append(f"[최근종목기록] {match[0]} 쿨다운 등록")
         else:
-            match = market_data.find_mentioned_ticker(topic["name"])
+            match = _match_known_code(topic["name"], known_codes) or market_data.find_mentioned_ticker(
+                topic["name"]
+            )
             if match:
-                name, _code = match
-                quote = market_data.get_stock_snapshot(name, run_ctx.data_date)
+                name, code = match
+                quote = market_data.get_stock_snapshot(name, run_ctx.data_date, code=code)
                 if quote and quote.adopted is not None:
                     extra_quote_line = quote.display_line()
 
