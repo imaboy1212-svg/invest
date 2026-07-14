@@ -33,6 +33,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add briefings/ logs/
+          git add briefings/ logs/ recent_stock_picks.json
           git diff --cached --quiet || git commit -m "chore: 주제 후보 브리핑 자동 생성 ($(date -u +%Y-%m-%d))"
           git push

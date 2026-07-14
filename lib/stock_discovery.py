@@ -117,10 +117,17 @@ def _naver_stock_news(code: str) -> list[str]:
     return headlines
 
 
-def discover_candidates(data_date: date) -> list[StockCandidate]:
-    """네이버 인기종목 중 개별 종목 뉴스·공시가 실제로 있는 종목만 반환한다."""
+def discover_candidates(data_date: date, exclude_names: set[str] | None = None) -> list[StockCandidate]:
+    """네이버 인기종목 중 개별 종목 뉴스·공시가 실제로 있는 종목만 반환한다.
+
+    exclude_names에 있는 종목(최근에 이미 종목리포트로 다룬 종목)은 후보에서 뺀다.
+    SK하이닉스처럼 항상 인기종목 상위에 걸리는 대형주가 매번 반복 선정되는 것을 막는다.
+    """
+    exclude_names = exclude_names or set()
     candidates = []
     for name, code in _naver_popular_stocks().items():
+        if name in exclude_names:
+            continue
         headlines = _naver_stock_news(code)
         if headlines:
             candidates.append(StockCandidate(name=name, code=code, news_headlines=headlines))

@@ -84,6 +84,7 @@ def _build_prompt(
     stock_candidate_lines: list[str],
     ipo_lines: list[str],
     global_lines: list[str],
+    avoid_stock_names: set[str],
 ) -> str:
     context_lines = []
     if run_note:
@@ -106,6 +107,12 @@ def _build_prompt(
             "있는 종목을 우선하라. 후보에 없어도 뉴스에 확실한 근거가 있는 종목이면 사용해도 된다. "
             "후보 종목이라도 관련 기사·공시가 실제로 없으면 억지로 종목리포트를 만들지 말고 "
             "그 팀은 비워라."
+        )
+    if avoid_stock_names:
+        context_lines.append(
+            "[종목리포트 반복 방지] 아래 종목은 최근 며칠 안에 이미 종목리포트로 다뤘으니, "
+            "다른 확실한 근거가 있는 종목이 있다면 이번엔 피하라 (매번 같은 종목만 반복되는 "
+            "것을 막기 위함): " + ", ".join(sorted(avoid_stock_names))
         )
     if ipo_lines:
         context_lines.append("[공모주 청약·상장 일정 - 네이버증권]")
@@ -133,7 +140,9 @@ def _number_tokens(text: str) -> set[str]:
     return {tok.replace(",", "") for tok in _NUMBER_RE.findall(text) if len(tok.replace(",", "")) >= 2}
 
 
-def _verify_topic(topic: dict, grounding_text: str, grounding_numbers: set[str]) -> str | None:
+def _verify_topic(
+    topic: dict, grounding_text: str, grounding_numbers: set[str], avoid_stock_names: set[str]
+) -> str | None:
     """원문 밖 회사명·숫자 생성(환각) 여부를 단순 포함 검사로 확인한다.
 
     문제없으면 None, 문제가 있으면 실패 사유 문자열을 반환한다.
@@ -161,6 +170,12 @@ def _verify_topic(topic: dict, grounding_text: str, grounding_numbers: set[str])
     if topic.get("team") == "종목리포트" and market_data.ticker_map_available():
         if market_data.find_mentioned_ticker(topic.get("name", "")) is None:
             return f"주제명에서 실제 상장 종목명을 찾을 수 없음: {topic.get('name')!r}"
+
+    if topic.get("team") == "종목리포트":
+        name = topic.get("name", "")
+        for avoided in avoid_stock_names:
+            if avoided in name:
+                return f"쿨다운 중인 종목 반복 선정: {avoided!r} (프롬프트 지시를 따르지 않음)"
 
     return None
 
@@ -214,6 +229,7 @@ def generate_topics(
     stock_candidate_lines: list[str] | None = None,
     ipo_lines: list[str] | None = None,
     global_lines: list[str] | None = None,
+    avoid_stock_names: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """(검증 통과한 주제 목록, 검증 실패로 제외된 주제 목록[team/name/reason]) 반환.
 
@@ -224,9 +240,12 @@ def generate_topics(
     stock_candidate_lines = stock_candidate_lines or []
     ipo_lines = ipo_lines or []
     global_lines = global_lines or []
+    avoid_stock_names = avoid_stock_names or set()
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-    prompt = _build_prompt(run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines, global_lines)
+    prompt = _build_prompt(
+        run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines, global_lines, avoid_stock_names
+    )
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
@@ -249,7 +268,7 @@ def generate_topics(
 
     verified, rejected = [], []
     for topic in raw_topics:
-        failure_reason = _verify_topic(topic, grounding_text, grounding_numbers)
+        failure_reason = _verify_topic(topic, grounding_text, grounding_numbers, avoid_stock_names)
         if failure_reason is None:
             verified.append(topic)
         else:

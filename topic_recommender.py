@@ -21,6 +21,7 @@ from lib import (
     ipo_calendar,
     market_data,
     news_crawler,
+    recent_picks,
     stock_discovery,
     telegram_client,
 )
@@ -69,11 +70,17 @@ def _enforce_stock_report_figures(topic: dict, data_date) -> None:
     if match:
         name, _code = match
         quote = market_data.get_stock_snapshot(name, data_date)
-        if quote and quote.adopted_change_pct is not None:
-            confirmed_figures.append({
-                "figure": f"{name} 등락률 {quote.adopted_change_pct:+.2f}% (종가 {quote.adopted:,.0f}원)",
-                "source": quote.adopted_source,
-            })
+        if quote and quote.adopted is not None:
+            # 소스 하나만 조용히 채택해서 보여주면 스크래핑 오류로 가격이 틀려도 알아챌 수
+            # 없다. 지수와 동일하게 KRX/네이버/Yahoo 값을 전부 보여줘서 코로 님이 직접
+            # 눈으로 대조할 수 있게 한다 (가이드 4-2 교차검증 원칙과 동일).
+            confirmed_figures.append({"figure": quote.display_line(), "source": "교차검증"})
+            prices = [p for p in (quote.krx, quote.naver, quote.yahoo) if p is not None]
+            if len(prices) >= 2 and (max(prices) - min(prices)) / min(prices) > 0.05:
+                print(
+                    f"[가격불일치] {name}: KRX={quote.krx} 네이버={quote.naver} "
+                    f"Yahoo={quote.yahoo} (5% 이상 차이 — 스크래핑 오류 가능성)"
+                )
 
         supplementary = market_data.get_supplementary_data(name, data_date)
         if supplementary.foreign_net_buy is not None:
@@ -210,7 +217,10 @@ def main() -> int:
     ]
     log_lines.append(f"[뉴스] 성공 언론사={succeeded_sources} 헤드라인 {len(headlines)}건")
 
-    stock_candidates = stock_discovery.discover_candidates(run_ctx.data_date)
+    recent_stock_names = recent_picks.get_recent_names(run_ctx.data_date)
+    log_lines.append(f"[최근종목] 쿨다운 중({recent_picks.COOLDOWN_DAYS}일) 제외 대상: {sorted(recent_stock_names)}")
+
+    stock_candidates = stock_discovery.discover_candidates(run_ctx.data_date, recent_stock_names)
     stock_candidate_lines = [c.summary_line() for c in stock_candidates[:10]]
     log_lines.append(f"[종목발굴] 후보 {len(stock_candidates)}건 (상위: {stock_candidate_lines[:5]})")
     for c in stock_candidates[:10]:
@@ -220,7 +230,7 @@ def main() -> int:
     log_lines.append(f"[IPO일정] {len(ipo_lines)}건 조회")
 
     raw_topics, rejected = gemini_client.generate_topics(
-        run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines, global_lines
+        run_note, index_lines, news_lines, stock_candidate_lines, ipo_lines, global_lines, recent_stock_names
     )
     log_lines.append(f"[Gemini] 생성된 주제 {len(raw_topics)}건, 검증 실패 {len(rejected)}건")
     for r in rejected:
@@ -237,6 +247,10 @@ def main() -> int:
         extra_quote_line = None
         if topic["team"] == "종목리포트":
             _enforce_stock_report_figures(topic, run_ctx.data_date)
+            match = market_data.find_mentioned_ticker(topic["name"])
+            if match:
+                recent_picks.record_pick(match[0], run_ctx.data_date)
+                log_lines.append(f"[최근종목기록] {match[0]} 쿨다운 등록")
         else:
             match = market_data.find_mentioned_ticker(topic["name"])
             if match:
