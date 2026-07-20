@@ -67,58 +67,34 @@ def _match_known_code(text: str, known_codes: dict[str, str]) -> tuple[str, str]
 
 
 def _enforce_stock_report_figures(topic: dict, data_date, known_codes: dict[str, str]) -> None:
-    """종목리포트에서 지수(코스피/코스닥) 언급을 완전히 배제하고 종목 자체 심층 수치로 채운다.
+    """종목리포트에서 지수(코스피/코스닥) 언급을 완전히 배제하고 종목 자체 가격을 정확히 채운다.
 
     Gemini가 지수 수치를 종목리포트에 섞어 넣는 문제가 있어, key_figures뿐 아니라
-    서론/본론/추천사유에서도 지수 언급 항목을 제거하고, pykrx 실측 수급/밸류에이션
-    데이터를 최대한 채운다 (등락률, 외국인/기관 순매수, 시가총액, PER/PBR/EPS).
+    서론/본론/추천사유에서도 지수 언급 항목을 제거한다.
 
-    종목코드는 가능하면 known_codes(네이버 인기종목 발굴 단계에서 이미 확보한 코드)를
-    우선 쓴다. pykrx 종목명→코드 매핑은 이 실행 환경에서 KRX가 계속 차단해 실패하는
-    경우가 많아서, 그 경우 가격 조회 자체가 안 돼 Gemini가 뉴스 헤드라인에 있던
-    (문맥이 잘린) 숫자를 대신 써버리는 문제가 실제로 발생했다.
+    종목코드는 known_codes(네이버 인기종목 발굴 단계에서 이미 확보한 코드)를 쓴다.
+    이전에는 pykrx 종목명→코드 매핑을 폴백으로 썼으나, 이 실행 환경에서 KRX가 pykrx
+    직접호출을 항상 차단해 가격 조회 자체가 실패하고 Gemini가 뉴스 헤드라인에 있던
+    (문맥이 잘린) 숫자를 대신 써버리는 문제가 실제로 발생해 pykrx 의존을 완전히 제거함.
     """
     confirmed_figures = []
-    match = _match_known_code(topic["name"], known_codes) or market_data.find_mentioned_ticker(topic["name"])
+    match = _match_known_code(topic["name"], known_codes)
     if match:
         name, code = match
-        quote = market_data.get_stock_snapshot(name, data_date, code=code)
+        quote = market_data.get_stock_snapshot(name, data_date, code)
         if quote and quote.adopted is not None:
             # 소스 하나만 조용히 채택해서 보여주면 스크래핑 오류로 가격이 틀려도 알아챌 수
-            # 없다. 지수와 동일하게 KRX/네이버/Yahoo 값을 전부 보여줘서 코로 님이 직접
+            # 없다. 지수와 동일하게 네이버/Yahoo 값을 전부 보여줘서 코로 님이 직접
             # 눈으로 대조할 수 있게 한다 (가이드 4-2 교차검증 원칙과 동일).
             confirmed_figures.append({"figure": quote.display_line(), "source": "교차검증"})
-            prices = [p for p in (quote.krx, quote.naver, quote.yahoo) if p is not None]
+            prices = [p for p in (quote.naver, quote.yahoo) if p is not None]
             if len(prices) >= 2 and (max(prices) - min(prices)) / min(prices) > 0.05:
                 print(
-                    f"[가격불일치] {name}: KRX={quote.krx} 네이버={quote.naver} "
-                    f"Yahoo={quote.yahoo} (5% 이상 차이 — 스크래핑 오류 가능성)"
+                    f"[가격불일치] {name}: 네이버={quote.naver} Yahoo={quote.yahoo} "
+                    "(5% 이상 차이 — 스크래핑 오류 가능성)"
                 )
         else:
-            print(f"[가격조회실패] {name}({code}): KRX/네이버/Yahoo 전부 조회 실패, 핵심 수치에서 가격 항목 제외됨")
-
-        supplementary = market_data.get_supplementary_data(name, data_date, code=code)
-        if supplementary.foreign_net_buy is not None:
-            confirmed_figures.append({
-                "figure": f"{name} 외국인 순매수 {supplementary.foreign_net_buy:,.0f}",
-                "source": "pykrx",
-            })
-        if supplementary.institution_net_buy is not None:
-            confirmed_figures.append({
-                "figure": f"{name} 기관 순매수 {supplementary.institution_net_buy:,.0f}",
-                "source": "pykrx",
-            })
-        if supplementary.market_cap is not None:
-            confirmed_figures.append({
-                "figure": f"{name} 시가총액 {supplementary.market_cap:,.0f}원",
-                "source": "pykrx",
-            })
-        if supplementary.per is not None:
-            confirmed_figures.append({"figure": f"{name} PER {supplementary.per:.2f}배", "source": "pykrx"})
-        if supplementary.pbr is not None:
-            confirmed_figures.append({"figure": f"{name} PBR {supplementary.pbr:.2f}배", "source": "pykrx"})
-        if supplementary.eps is not None:
-            confirmed_figures.append({"figure": f"{name} EPS {supplementary.eps:,.0f}원", "source": "pykrx"})
+            print(f"[가격조회실패] {name}({code}): 네이버/Yahoo 전부 조회 실패, 핵심 수치에서 가격 항목 제외됨")
 
     filtered_gemini_figures = [
         kf for kf in topic.get("key_figures", []) if not _strip_index_mentions(kf.get("figure", ""))
@@ -173,7 +149,7 @@ def _summary_message(
     index_snapshot,
     topics: list[dict],
     excluded: list[dict],
-    news_failed: bool,
+    succeeded_sources: list[str],
     rejected_teams: set[str],
 ) -> str:
     header = f"📊 WP투자 주제 후보 ({run_ctx.now_kst.strftime('%Y-%m-%d %H:%M')} 기준)"
@@ -203,8 +179,10 @@ def _summary_message(
         lines.append(f"- 사유: {topic.get('reason', '')}")
         lines.append("")
 
-    if news_failed:
+    if len(succeeded_sources) == 0:
         lines.append("※ 뉴스 수집 실패, 지수 데이터만 반영")
+    elif len(succeeded_sources) == 1:
+        lines.append(f"※ 교차 확인 언론사 1곳뿐 ({succeeded_sources[0]}) — 최소 2곳 원칙 미충족")
     if excluded:
         lines.append(f"※ 완료 주제 {len(excluded)}건 자동 제외됨")
     lines.append(f"※ 상세 브리핑 파일 {len(topics)}건 첨부")
@@ -226,7 +204,6 @@ def main() -> int:
     log_lines.append(f"[해외지수] {len(global_lines)}건 조회")
 
     headlines, succeeded_sources = news_crawler.collect_headlines()
-    news_failed = len(succeeded_sources) == 0
     news_lines = [
         f"[{h.source}] {h.title}" + (f" - {h.summary}" if h.summary else "") for h in headlines
     ]
@@ -263,19 +240,15 @@ def main() -> int:
         extra_quote_line = None
         if topic["team"] == "종목리포트":
             _enforce_stock_report_figures(topic, run_ctx.data_date, known_codes)
-            match = _match_known_code(topic["name"], known_codes) or market_data.find_mentioned_ticker(
-                topic["name"]
-            )
+            match = _match_known_code(topic["name"], known_codes)
             if match:
                 recent_picks.record_pick(match[0], run_ctx.data_date)
                 log_lines.append(f"[최근종목기록] {match[0]} 쿨다운 등록")
         else:
-            match = _match_known_code(topic["name"], known_codes) or market_data.find_mentioned_ticker(
-                topic["name"]
-            )
+            match = _match_known_code(topic["name"], known_codes)
             if match:
                 name, code = match
-                quote = market_data.get_stock_snapshot(name, run_ctx.data_date, code=code)
+                quote = market_data.get_stock_snapshot(name, run_ctx.data_date, code)
                 if quote and quote.adopted is not None:
                     extra_quote_line = quote.display_line()
 
@@ -285,7 +258,7 @@ def main() -> int:
         briefing_paths.append(path)
     log_lines.append(f"[브리핑] 파일 {len(briefing_paths)}건 생성: {[p.name for p in briefing_paths]}")
 
-    summary = _summary_message(run_ctx, index_snapshot, new_topics, excluded, news_failed, rejected_teams)
+    summary = _summary_message(run_ctx, index_snapshot, new_topics, excluded, succeeded_sources, rejected_teams)
     telegram_client.send_message(summary)
     for path in briefing_paths:
         telegram_client.send_document(path)

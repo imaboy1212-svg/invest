@@ -56,6 +56,11 @@ _RESPONSE_SCHEMA_HINT = """
   intro_angle, body_points, reason 어디에도 코스피/코스닥 언급을 넣지 마라. 시장 전체
   상황을 배경으로 쓰지 말고, 오직 그 종목 자체(등락률, 거래대금, 수급, 시가총액, PER/PBR,
   실적, 최근 뉴스·공시, 사업 배경 등)에만 집중해 심층적으로 써라.
+- '종목리포트' team의 name(주제명)에는 반드시 특정 상장 기업 1개의 정확한 종목명을
+  포함해야 한다. "소부장", "2차전지 관련주", "반도체 테마", "AI 관련주"처럼 섹터·테마·
+  업종명이나 "~관련주"/"~업계"/"~업종" 형태, 또는 여러 기업을 묶어 다루는 주제는
+  절대 '종목리포트'로 만들지 마라. 그런 섹터·테마성 소재는 '마켓칼럼'으로 분류하라.
+  종목리포트인데 특정 기업 1개로 좁혀지지 않으면 차라리 그 팀을 비워라.
 - 코스피/코스닥 지수, 해외 지수(S&P500/나스닥/다우), 환율, 유가 등 시장 전체·국제 정세
   데이터는 '마켓칼럼' team에서만 사용하라. 마켓칼럼은 국내 지수뿐 아니라 아래 제공된
   [해외 지수·환율·유가 현황]과 국제 정세 관련 뉴스가 있으면 적극 반영해서 국내외 시장
@@ -135,6 +140,10 @@ def _build_prompt(
 
 _NUMBER_RE = re.compile(r"\d[\d,]*")
 
+_SECTOR_THEME_KEYWORDS = (
+    "관련주", "테마주", "테마", "업종", "업계", "밸류체인", "섹터", "소부장",
+)
+
 
 def _number_tokens(text: str) -> set[str]:
     return {tok.replace(",", "") for tok in _NUMBER_RE.findall(text) if len(tok.replace(",", "")) >= 2}
@@ -167,12 +176,11 @@ def _verify_topic(
     # 주제를 버리기보다, topic_recommender._enforce_stock_report_figures가 해당 부분만
     # 제거하고 나머지 심층 내용은 살리는 쪽이 분량/품질에 유리하다.
 
-    if topic.get("team") == "종목리포트" and market_data.ticker_map_available():
-        if market_data.find_mentioned_ticker(topic.get("name", "")) is None:
-            return f"주제명에서 실제 상장 종목명을 찾을 수 없음: {topic.get('name')!r}"
-
     if topic.get("team") == "종목리포트":
         name = topic.get("name", "")
+        for keyword in _SECTOR_THEME_KEYWORDS:
+            if keyword in name:
+                return f"종목리포트가 섹터/테마를 다룸(단일 종목 아님) — {keyword!r} 감지: {name!r}"
         for avoided in avoid_stock_names:
             if avoided in name:
                 return f"쿨다운 중인 종목 반복 선정: {avoided!r} (프롬프트 지시를 따르지 않음)"

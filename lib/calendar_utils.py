@@ -3,18 +3,22 @@
 wp-invest-article-builder SKILL.md Step 3.5 규칙을 반영한다:
 - 주말·공휴일 실행 시 "오늘 마감/청약/발표" 류 표현 금지, 직전 거래일 데이터임을 명시
 - 평일 장마감 후 실행 시 당일 마감 수치 기준으로 진행
+
+공휴일 판단은 이전에 pykrx(get_index_ohlcv_by_date)로 "해당일 지수 데이터가 있는지"를
+확인하는 방식이었으나, 이 실행 환경에서 KRX가 pykrx 직접호출을 항상 차단해 매번 실패하고
+"평일이면 거래일"로만 판단하는 상태였다 (2026-07-20 확인, 실질적으로 공휴일 판단이 한 번도
+동작한 적이 없었음). 네트워크 호출이 필요 없는 holidays 라이브러리(한국 공휴일)로 교체.
 """
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pykrx import stock
+import holidays
 
 KST = ZoneInfo("Asia/Seoul")
 
-# pykrx 지수 코드: 1001 = 코스피
-_KOSPI_INDEX_CODE = "1001"
+_KR_HOLIDAYS = holidays.KR()
 
 
 @dataclass
@@ -26,14 +30,8 @@ class RunContext:
 
 
 def is_trading_day(day: date) -> bool:
-    """pykrx에 해당일 코스피 지수 데이터가 있으면 거래일로 판단한다."""
-    date_str = day.strftime("%Y%m%d")
-    try:
-        df = stock.get_index_ohlcv_by_date(date_str, date_str, _KOSPI_INDEX_CODE)
-    except Exception:
-        # pykrx 조회 자체가 실패하면 주말 여부만으로 판단(보수적으로 평일은 거래일 취급)
-        return day.weekday() < 5
-    return not df.empty
+    """평일이면서 한국 공휴일이 아니면 거래일로 판단한다."""
+    return day.weekday() < 5 and day not in _KR_HOLIDAYS
 
 
 def last_trading_day(day: date) -> date:

@@ -1,25 +1,29 @@
-"""지수/종목 가격 조회 및 3소스 교차검증 (한국거래소 pykrx → 네이버증권 → Yahoo Finance).
+"""지수/종목 가격 조회 및 교차검증 (네이버증권 → Yahoo Finance).
 
 가이드 4-2 규칙:
-- 채택 우선순위: pykrx → 네이버증권 → Yahoo Finance
-- 값이 서로 달라도 스크립트가 임의로 제외하지 않고, 세 값을 모두 리포트에 표시한다
+- 값이 서로 달라도 스크립트가 임의로 제외하지 않고, 두 값을 모두 리포트에 표시한다
 - 골든타임: 지수 등락률 ±3% 이상
-- 외국인/기관 순매수·시가총액·거래대금은 보강 데이터. 조회 실패해도 파이프라인은 계속 진행한다
+
+KRX(pykrx) 직접조회 제거 안내 (2026-07-20):
+이 실행 환경(GitHub Actions)에서 pykrx의 KRX 직접호출은 수십 회 실행 동안 단 한 번도
+성공한 적이 없다 (매번 "Expecting value: line 1 column 1" 빈 응답 실패 → KRX가 클라우드
+IP를 차단하는 것으로 추정). "KRX 로그인 실패" 메시지는 pykrx 자체의 정보성 출력일 뿐
+원인이 아니며(로그인 없이도 동작하는 라이브러리), 실계정 로그인을 등록해도 IP 차단이면
+해결되지 않을 가능성이 높아 코로 님과 상의 후 pykrx 직접호출을 전부 제거하기로 결정함.
+지수/종목 가격은 네이버증권 → Yahoo Finance 2소스 교차검증으로 대체.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
-from pykrx import stock
 
 GOLDEN_TIME_THRESHOLD = 3.0
 
 _YAHOO_INDEX_TICKER = {"코스피": "^KS11", "코스닥": "^KQ11"}
-_PYKRX_INDEX_CODE = {"코스피": "1001", "코스닥": "2001"}
 _NAVER_INDEX_CODE = {"코스피": "KOSPI", "코스닥": "KOSDAQ"}
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -28,10 +32,8 @@ _HEADERS = {"User-Agent": "Mozilla/5.0"}
 @dataclass
 class PriceQuote:
     label: str
-    krx: float | None = None
     naver: float | None = None
     yahoo: float | None = None
-    krx_change_pct: float | None = None
     naver_change_pct: float | None = None
     yahoo_change_pct: float | None = None
     adopted: float | None = None
@@ -41,8 +43,6 @@ class PriceQuote:
 
     def display_line(self) -> str:
         parts = []
-        if self.krx is not None:
-            parts.append(f"{self.krx:,.1f} (KRX)")
         if self.naver is not None:
             parts.append(f"{self.naver:,.1f} (네이버)")
         if self.yahoo is not None:
@@ -52,11 +52,7 @@ class PriceQuote:
 
 
 def _adopt(quote: PriceQuote) -> None:
-    if quote.krx is not None:
-        quote.adopted, quote.adopted_source, quote.adopted_change_pct = (
-            quote.krx, "KRX", quote.krx_change_pct,
-        )
-    elif quote.naver is not None:
+    if quote.naver is not None:
         quote.adopted, quote.adopted_source, quote.adopted_change_pct = (
             quote.naver, "네이버", quote.naver_change_pct,
         )
@@ -73,19 +69,10 @@ def _pct_change(prev: float, curr: float) -> float:
 
 
 def get_index_snapshot(data_date: date) -> dict[str, PriceQuote]:
-    date_str = data_date.strftime("%Y%m%d")
     result: dict[str, PriceQuote] = {}
 
-    for label, krx_code in _PYKRX_INDEX_CODE.items():
+    for label in _NAVER_INDEX_CODE:
         quote = PriceQuote(label=label)
-
-        try:
-            df = stock.get_index_ohlcv_by_date(date_str, date_str, krx_code)
-            if not df.empty:
-                quote.krx = float(df.iloc[-1]["종가"])
-                quote.krx_change_pct = float(df.iloc[-1]["등락률"])
-        except Exception:
-            pass
 
         try:
             naver_price, naver_pct = _fetch_naver_index(_NAVER_INDEX_CODE[label])
@@ -151,48 +138,12 @@ def _fetch_yahoo_quote(ticker: str) -> tuple[float, float]:
     return curr, _pct_change(prev, curr)
 
 
-_TICKER_NAME_CACHE: dict[str, str] | None = None
-
-
-def _ticker_name_map() -> dict[str, str]:
-    global _TICKER_NAME_CACHE
-    if _TICKER_NAME_CACHE is None:
-        mapping = {}
-        for market in ("KOSPI", "KOSDAQ"):
-            for code in stock.get_market_ticker_list(market=market):
-                mapping[stock.get_market_ticker_name(code)] = code
-        _TICKER_NAME_CACHE = mapping
-    return _TICKER_NAME_CACHE
-
-
-def resolve_ticker_by_name(stock_name: str) -> str | None:
-    return _ticker_name_map().get(stock_name)
-
-
-def ticker_map_available() -> bool:
-    """pykrx 종목명-코드 매핑이 정상적으로 로드됐는지 여부 (KRX 차단 등으로 실패하면 False)."""
-    try:
-        return bool(_ticker_name_map())
-    except Exception:
-        return False
-
-
-def get_stock_snapshot(stock_name: str, data_date: date, code: str | None = None) -> PriceQuote | None:
-    """code를 직접 넘기면 pykrx 종목명 매핑(KRX 차단으로 자주 실패)을 건너뛰고 바로 조회한다."""
-    code = code or resolve_ticker_by_name(stock_name)
+def get_stock_snapshot(stock_name: str, data_date: date, code: str) -> PriceQuote | None:
+    """code는 호출부(stock_discovery가 네이버에서 이미 확보한 종목코드)에서 반드시 넘겨야 한다."""
     if code is None:
         return None
 
-    date_str = data_date.strftime("%Y%m%d")
     quote = PriceQuote(label=stock_name)
-
-    try:
-        df = stock.get_market_ohlcv_by_date(date_str, date_str, code)
-        if not df.empty:
-            quote.krx = float(df.iloc[-1]["종가"])
-            quote.krx_change_pct = float(df.iloc[-1]["등락률"])
-    except Exception:
-        pass
 
     try:
         naver_price, naver_pct = _fetch_naver_stock(code)
@@ -200,12 +151,13 @@ def get_stock_snapshot(stock_name: str, data_date: date, code: str | None = None
     except Exception:
         pass
 
-    try:
-        market = "KS" if code in stock.get_market_ticker_list(market="KOSPI") else "KQ"
-        yahoo_price, yahoo_pct = _fetch_yahoo_quote(f"{code}.{market}")
-        quote.yahoo, quote.yahoo_change_pct = yahoo_price, yahoo_pct
-    except Exception:
-        pass
+    for suffix in ("KS", "KQ"):
+        try:
+            yahoo_price, yahoo_pct = _fetch_yahoo_quote(f"{code}.{suffix}")
+            quote.yahoo, quote.yahoo_change_pct = yahoo_price, yahoo_pct
+            break
+        except Exception:
+            continue
 
     _adopt(quote)
     return quote
@@ -226,80 +178,3 @@ def _fetch_naver_stock(code: str) -> tuple[float, float]:
         if change_area and "하락" in change_area.get_text():
             pct = -pct
     return price, pct
-
-
-@dataclass
-class SupplementaryData:
-    foreign_net_buy: float | None = None
-    institution_net_buy: float | None = None
-    market_cap: float | None = None
-    trading_value: float | None = None
-    per: float | None = None
-    pbr: float | None = None
-    eps: float | None = None
-
-
-def find_mentioned_ticker(text: str) -> tuple[str, str] | None:
-    """text 안에 포함된 상장사명을 찾는다 (긴 이름 우선, 하드코딩 종목 리스트 없이 뉴스/주제명 기반 탐지용).
-
-    보강 데이터용 조회이므로 pykrx가 실패해도 파이프라인을 막지 않는다.
-    """
-    try:
-        name_map = _ticker_name_map()
-    except Exception:
-        return None
-    names = sorted(name_map.keys(), key=len, reverse=True)
-    for name in names:
-        if len(name) >= 2 and name in text:
-            return name, name_map[name]
-    return None
-
-
-def get_supplementary_data(stock_name: str, data_date: date, code: str | None = None) -> SupplementaryData:
-    """외국인/기관 순매수, 시가총액, 거래대금. 실패해도 None으로 채워 파이프라인을 막지 않는다.
-
-    code를 직접 넘기면 pykrx 종목명 매핑(KRX 차단으로 자주 실패)을 건너뛴다.
-    """
-    supplementary = SupplementaryData()
-    code = code or resolve_ticker_by_name(stock_name)
-    if code is None:
-        return supplementary
-
-    date_str = data_date.strftime("%Y%m%d")
-
-    try:
-        trading_value_df = stock.get_market_trading_value_by_date(date_str, date_str, code)
-        if not trading_value_df.empty:
-            row = trading_value_df.iloc[-1]
-            supplementary.foreign_net_buy = float(row.get("외국인합계", row.get("외국인", 0)))
-            supplementary.institution_net_buy = float(row.get("기관합계", 0))
-    except Exception:
-        pass
-
-    try:
-        cap_df = stock.get_market_cap(date_str, date_str, code)
-        if not cap_df.empty:
-            supplementary.market_cap = float(cap_df.iloc[-1]["시가총액"])
-    except Exception:
-        pass
-
-    try:
-        ohlcv_df = stock.get_market_ohlcv_by_date(date_str, date_str, code)
-        if not ohlcv_df.empty:
-            supplementary.trading_value = float(ohlcv_df.iloc[-1]["거래대금"])
-    except Exception:
-        pass
-
-    for market in ("KOSPI", "KOSDAQ"):
-        try:
-            fundamental_df = stock.get_market_fundamental_by_ticker(date_str, market=market)
-            if not fundamental_df.empty and code in fundamental_df.index:
-                row = fundamental_df.loc[code]
-                supplementary.per = float(row.get("PER")) if row.get("PER") else None
-                supplementary.pbr = float(row.get("PBR")) if row.get("PBR") else None
-                supplementary.eps = float(row.get("EPS")) if row.get("EPS") else None
-                break
-        except Exception:
-            continue
-
-    return supplementary
