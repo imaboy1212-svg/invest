@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 RECENT_PICKS_PATH = Path(__file__).resolve().parent.parent / "recent_stock_picks.json"
-COOLDOWN_DAYS = 5
+COOLDOWN_DAYS = 14
 
 
 def _load() -> list[dict]:
@@ -25,7 +25,7 @@ def _load() -> list[dict]:
 
 
 def get_recent_names(today: date) -> set[str]:
-    """쿨다운 기간(COOLDOWN_DAYS) 안에 이미 다룬 종목명 집합."""
+    """쿨다운 기간(COOLDOWN_DAYS, 약 2주) 안에 이미 다룬 종목명 집합."""
     cutoff = today - timedelta(days=COOLDOWN_DAYS)
     names = set()
     for pick in _load():
