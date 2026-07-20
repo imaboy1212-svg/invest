@@ -37,26 +37,22 @@ _NAVER_FINANCE_SITES = [
 ]
 
 # 개별 언론사 사이트 (아그리게이터가 전부 실패했을 때 폴백)
+#
+# 2026-07-20 실행 로그의 [진단] href 샘플로 실제 구조를 확인해 갱신함:
+# - 한국경제: 헤더를 강화해도 403 Forbidden 지속 (봇 차단 추정). 셀렉터 문제가
+#   아니라 접근 자체가 막힌 것이라 크롤링 대상에서 제외. 실패 시 위 헤더로도
+#   403이 계속되면 로그(`[뉴스크롤링 실패] 한국경제: ... 403 ...`)로 명확히 남는다.
+# - 매일경제: 실제 기사 링크는 `/news/view/<숫자>` 형태였음 (기존 `/news/stock-market/\d+`는
+#   존재하지 않는 패턴이라 0건이었음).
+# - 서울경제/파이낸셜뉴스: 정적 HTML 응답에 기사 링크가 전혀 없고 내비게이션/SNS
+#   링크만 있었음 — 기사 목록이 JS로 렌더링되는 구조라 requests+BeautifulSoup로는
+#   원천적으로 수집 불가. href_pattern을 더 손봐도 해결되지 않으므로 크롤링
+#   대상에서 제외함.
 _PRESS_SITES = [
-    {
-        "name": "한국경제",
-        "url": "https://www.hankyung.com/",
-        "href_pattern": re.compile(r"/article/\d+"),
-    },
     {
         "name": "매일경제",
         "url": "https://stock.mk.co.kr/",
-        "href_pattern": re.compile(r"/news/stock-market/\d+|/news/\d+"),
-    },
-    {
-        "name": "서울경제",
-        "url": "https://www.sedaily.com/NewsList/GD07",
-        "href_pattern": re.compile(r"/NewsView/\w+"),
-    },
-    {
-        "name": "파이낸셜뉴스",
-        "url": "https://www.fnnews.com/section/007001000000",
-        "href_pattern": re.compile(r"/news/\d+"),
+        "href_pattern": re.compile(r"/news/view/\d+"),
     },
 ]
 
@@ -189,6 +185,10 @@ def collect_headlines() -> tuple[list[Headline], list[str]]:
         if len(succeeded_sources) >= MIN_SOURCES_REQUIRED:
             return all_headlines, sorted(succeeded_sources)
 
+    print(
+        "[뉴스크롤링 제외] 한국경제(헤더 강화해도 403 지속), 서울경제/파이낸셜뉴스"
+        "(기사 목록이 JS 렌더링이라 정적 HTML에서 수집 불가) — 크롤링 대상에서 제외됨"
+    )
     for site in _PRESS_SITES:
         try:
             headlines = _crawl_press_site(site)
