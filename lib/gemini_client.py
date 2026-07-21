@@ -38,7 +38,8 @@ _RESPONSE_SCHEMA_HINT = """
       "article_structure": {
         "intro_angle": "서론 각도 2~3문장",
         "body_points": ["본론에서 다룰 관점 1", "본론에서 다룰 관점 2", "..."]
-      }
+      },
+      "risk_factors": ["리스크 요인 1 (1~2문장)", "리스크 요인 2 (1~2문장)", "..."]
     }
   ]
 }
@@ -47,6 +48,10 @@ _RESPONSE_SCHEMA_HINT = """
 - related_news는 4~6개
 - article_structure.body_points는 4~6개, 각 항목은 구체적인 분석 관점을 2~3문장으로
 - reason(추천 사유)도 1줄이 아니라 2~3문장으로 왜 지금 이 주제가 중요한지 상세히 서술
+- risk_factors는 2~3개, 각각 1~2문장으로 구체적 리스크(실적 불확실성, 밸류에이션 부담,
+  경쟁 심화, 규제, 수급 등)를 서술. 좋은 얘기만 나열하지 말고 반드시 반대 시나리오도
+  균형 있게 제시하라 (매수 권유 톤 금지 원칙과 동일). 이 항목도 사람이 이어서 글을 쓸 때
+  바로 "리스크 요인" 섹션 초안으로 쓸 수 있도록 구체적으로 작성하라.
 확인된 수치·뉴스가 부족해 특정 팀(종목리포트/마켓칼럼/IPO) 주제를 만들 수 없으면
 그 팀은 topics 배열에서 아예 제외하라. 분량을 채우려고 존재하지 않는 수치나 뉴스를
 지어내는 것보다는, 확인 가능한 범위 안에서 최대한 깊이 있게 다루는 쪽을 우선하라.
@@ -172,6 +177,7 @@ def _verify_topic(
     structure = topic.get("article_structure", {})
     text_fields.append(structure.get("intro_angle", ""))
     text_fields.extend(structure.get("body_points", []))
+    text_fields.extend(topic.get("risk_factors", []))
 
     for field_text in text_fields:
         for number in _number_tokens(field_text):
@@ -225,8 +231,12 @@ _TOPIC_ITEM_SCHEMA = {
             },
             "required": ["intro_angle", "body_points"],
         },
+        "risk_factors": {"type": "ARRAY", "items": {"type": "STRING"}},
     },
-    "required": ["team", "name", "golden_time", "reason", "key_figures", "related_news", "article_structure"],
+    "required": [
+        "team", "name", "golden_time", "reason", "key_figures", "related_news",
+        "article_structure", "risk_factors",
+    ],
 }
 
 _RESPONSE_SCHEMA = {

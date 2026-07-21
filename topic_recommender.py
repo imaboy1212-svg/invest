@@ -109,6 +109,10 @@ def _enforce_stock_report_figures(topic: dict, data_date, known_codes: dict[str,
     ]
     topic["article_structure"] = structure
 
+    topic["risk_factors"] = [
+        r for r in topic.get("risk_factors", []) if not _strip_index_mentions(r)
+    ]
+
 
 def _briefing_markdown(topic: dict, run_note: str | None, extra_quote_line: str | None) -> str:
     lines = [f"# [{topic['team']}] {topic['name']}", ""]
@@ -139,6 +143,13 @@ def _briefing_markdown(topic: dict, run_note: str | None, extra_quote_line: str 
     for point in structure.get("body_points", []):
         lines.append(f"- 본론 관점: {point}")
     lines.append("")
+
+    risk_factors = topic.get("risk_factors", [])
+    if risk_factors:
+        lines.append("## 리스크 요인")
+        for risk in risk_factors:
+            lines.append(f"- {risk}")
+        lines.append("")
 
     lines.append(f"## 추천 사유\n{topic.get('reason', '')}\n")
     return "\n".join(lines)
