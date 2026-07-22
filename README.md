@@ -18,10 +18,19 @@ GitHub에 커밋 + 텔레그램(@investwellth)으로 전송한다.
 6. 상세 브리핑 마크다운을 `briefings/`에 생성 및 커밋
 7. 텔레그램으로 요약 메시지 + 브리핑 파일 전송
 
-## 스케줄 (GitHub Actions)
+## 스케줄 (실제 운영: PythonAnywhere)
+
+실제 운영은 PythonAnywhere 예약 작업(Tasks)이 담당한다. 실행 전 `git pull`로 이 저장소의
+최신 코드를 받아온 뒤 실행하도록 구성되어 있어야 한다 (`cd .../invest && git pull &&
+python3 topic_recommender.py`) — git pull 없이 실행하면 코드가 갱신되지 않는다.
 
 - 평일: UTC 06:40 (KST 15:40, 장마감 후)
 - 토·일: UTC 11:00 (KST 20:00, 금요일 데이터 기준 + 주말 뉴스 반영)
+
+GitHub Actions 워크플로우(`.github/workflows/topic_recommender.yml`)는 같은 시각에 자동
+실행되면 PythonAnywhere와 텔레그램이 중복 발송되고 브리핑 파일이 겹쳐 PythonAnywhere의
+git pull이 충돌하는 문제가 있어, 자동 스케줄은 꺼두고 `workflow_dispatch`(수동 실행)로
+코드 검증할 때만 사용한다.
 
 ## 로컬 실행
 

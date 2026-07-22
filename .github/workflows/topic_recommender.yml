@@ -1,9 +1,10 @@
 name: 주제 후보 추천
 
 on:
-  schedule:
-    - cron: "40 6 * * 1-5"   # KST 15:40 평일 (장마감 후)
-    - cron: "0 11 * * 6,0"  # KST 20:00 토·일 (금요일 데이터 + 주말 뉴스)
+  # 실제 운영은 PythonAnywhere 예약 작업(Tasks)에서 담당한다 (06:40, 11:00 UTC).
+  # GitHub Actions 자동 스케줄까지 켜져 있으면 같은 시각에 텔레그램이 중복 발송되고
+  # 브리핑 파일이 겹쳐 PythonAnywhere 쪽 git pull이 충돌하는 문제가 있어 자동 실행은
+  # 끄고, 수동 트리거(workflow_dispatch)로 코드 검증할 때만 쓴다.
   workflow_dispatch: {}
 
 permissions:
