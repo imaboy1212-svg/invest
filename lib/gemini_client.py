@@ -193,8 +193,11 @@ def _verify_topic(
         for keyword in _SECTOR_THEME_KEYWORDS:
             if keyword in name:
                 return f"종목리포트가 섹터/테마를 다룸(단일 종목 아님) — {keyword!r} 감지: {name!r}"
+        # avoided 종목명은 주제명 맨 앞(실제 주인공 자리)에 있을 때만 반복 선정으로 본다.
+        # 다른 종목이 주인공이고 avoided 종목은 배경 설명으로 잠깐 언급된 경우(예: "레인보우
+        # 로보틱스, 삼성전자 로봇사업 본격화에 주가 16% 급등")까지 오탐으로 거부하면 안 된다.
         for avoided in avoid_stock_names:
-            if avoided in name:
+            if name.startswith(avoided):
                 return f"쿨다운 중인 종목 반복 선정: {avoided!r} (프롬프트 지시를 따르지 않음)"
 
     return None
