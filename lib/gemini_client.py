@@ -79,8 +79,12 @@ _RESPONSE_SCHEMA_HINT = """
   "언론사" 부분은 source 필드에, "제목" 부분만(대괄호 없이, " - 요약" 부분도 제외하고)
   headline 필드에 글자 단위로 동일하게 옮겨 적어라. headline에 대괄호나 언론사명을
   다시 넣지 마라 (source 필드와 중복 표기됨). 문장을 다듬거나 요약하거나 새로 만들지
-  마라. 뒤에 붙은 "- 요약" 내용은 key_figures나 intro_angle/body_points를 더 풍부하고
-  구체적으로 쓰는 데 참고 자료로만 사용하고, 숫자·회사명은 아래 규칙을 반드시 지켜라.
+  마라. 특히 제목이 길다고 뒷부분을 "..."로 잘라내지 마라 — 제목 끝까지 원문 글자
+  그대로 전부 옮겨야 한다. 네가 만든 "..."로 끝나는 headline은 원문과 글자가 달라서
+  전부 검증 실패로 제외된다. 원문 자체에 "…"(말줄임표)가 포함된 경우에만 그 글자를
+  그대로 옮기고, 그 외에는 절대 네가 임의로 자르거나 말줄임표를 추가하지 마라. 뒤에
+  붙은 "- 요약" 내용은 key_figures나 intro_angle/body_points를 더 풍부하고 구체적으로
+  쓰는 데 참고 자료로만 사용하고, 숫자·회사명은 아래 규칙을 반드시 지켜라.
 - key_figures, name, reason, intro_angle, body_points에 들어가는 회사명·금액·비율·
   계약규모 등 모든 숫자와 고유명사는 반드시 아래 제공된 원문(지수/뉴스/종목후보/IPO일정/
   해외지수)에 등장하는 것만 사용하라. 원문에 없는 회사명, 금액, 수치는 절대로 만들어내지
@@ -169,8 +173,17 @@ def _verify_topic(
     """
     for news in topic.get("related_news", []):
         headline = news.get("headline", "")
-        if headline and headline not in grounding_text:
-            return f"관련 뉴스 헤드라인이 원문에 없음: {headline!r}"
+        if not headline or headline in grounding_text:
+            continue
+        # Gemini가 지시를 어기고 긴 제목 뒤를 "..."로 잘랐을 경우, 전체 주제를
+        # 버리기보다 원문에 실제로 있는 접두 부분까지만 채택해서 구제한다.
+        truncated = headline
+        while truncated and truncated[-1] in '."\'…”’ ':
+            truncated = truncated[:-1]
+        if truncated != headline and truncated and truncated in grounding_text:
+            news["headline"] = truncated
+            continue
+        return f"관련 뉴스 헤드라인이 원문에 없음: {headline!r}"
 
     text_fields = [kf.get("figure", "") for kf in topic.get("key_figures", [])]
     text_fields.append(topic.get("reason", ""))
