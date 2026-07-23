@@ -9,6 +9,7 @@
 레벨에서 재검증해서 통과하지 못한 후보는 제외한다.
 """
 
+import difflib
 import json
 import os
 import re
@@ -164,8 +165,28 @@ def _number_tokens(text: str) -> set[str]:
     return {tok.replace(",", "") for tok in _NUMBER_RE.findall(text) if len(tok.replace(",", "")) >= 2}
 
 
+_HEADLINE_PREFIX_RE = re.compile(r"^\[[^\]]+\]\s*(.*)$")
+_HEADLINE_MATCH_CUTOFF = 0.6
+
+
+def _candidate_headlines(news_lines: list[str]) -> list[str]:
+    """news_lines("[출처] 제목 - 요약")에서 제목만 뽑아 후보 목록을 만든다."""
+    candidates = []
+    for line in news_lines:
+        m = _HEADLINE_PREFIX_RE.match(line)
+        remainder = m.group(1) if m else line
+        title = remainder.split(" - ")[0].strip()
+        if title:
+            candidates.append(title)
+    return candidates
+
+
 def _verify_topic(
-    topic: dict, grounding_text: str, grounding_numbers: set[str], avoid_stock_names: set[str]
+    topic: dict,
+    grounding_text: str,
+    grounding_numbers: set[str],
+    avoid_stock_names: set[str],
+    candidate_headlines: list[str],
 ) -> str | None:
     """원문 밖 회사명·숫자 생성(환각) 여부를 단순 포함 검사로 확인한다.
 
@@ -182,6 +203,13 @@ def _verify_topic(
             truncated = truncated[:-1]
         if truncated != headline and truncated and truncated in grounding_text:
             news["headline"] = truncated
+            continue
+        # 그래도 원문과 글자가 안 맞으면(대괄호 재삽입, 사소한 표현 차이 등), 실제
+        # 제공된 헤드라인 후보 중 가장 비슷한 것을 찾아 그걸로 교체한다 — 항상 실존
+        # 헤드라인으로만 치환되므로 환각 위험 없이 오탐으로 인한 전체 거부를 막는다.
+        close = difflib.get_close_matches(headline, candidate_headlines, n=1, cutoff=_HEADLINE_MATCH_CUTOFF)
+        if close:
+            news["headline"] = close[0]
             continue
         return f"관련 뉴스 헤드라인이 원문에 없음: {headline!r}"
 
@@ -305,10 +333,13 @@ def generate_topics(
     grounding_lines = index_lines + news_lines + stock_candidate_lines + ipo_lines + global_lines
     grounding_text = "\n".join(grounding_lines)
     grounding_numbers = _number_tokens(grounding_text)
+    candidate_headlines = _candidate_headlines(news_lines)
 
     verified, rejected = [], []
     for topic in raw_topics:
-        failure_reason = _verify_topic(topic, grounding_text, grounding_numbers, avoid_stock_names)
+        failure_reason = _verify_topic(
+            topic, grounding_text, grounding_numbers, avoid_stock_names, candidate_headlines
+        )
         if failure_reason is None:
             verified.append(topic)
         else:
