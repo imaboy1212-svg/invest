@@ -196,8 +196,10 @@ def get_price_and_52w_range(code: str) -> PriceRangeSnapshot | None:
         current = float(price_tag.get_text(strip=True).replace(",", ""))
 
         flat_text = soup.get_text(" ", strip=True)
-        high_match = re.search(r"52주최고\s*([\d,]+)", flat_text)
-        low_match = re.search(r"52주최저\s*([\d,]+)", flat_text)
+        # "52주" 와 "최고"/"최저" 사이에 공백이 있을 수도(자연스러운 한국어 표기),
+        # 없을 수도(마크업이 한 태그에 붙여 넣은 경우) 있어 \s*로 둘 다 받는다.
+        high_match = re.search(r"52\s*주\s*최고\s*([\d,]+)", flat_text)
+        low_match = re.search(r"52\s*주\s*최저\s*([\d,]+)", flat_text)
         if not high_match or not low_match:
             print(f"[52주고저] 패턴 매칭 실패(code={code}): {flat_text[:200]!r}")
             return None

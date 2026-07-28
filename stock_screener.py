@@ -66,15 +66,27 @@ class ScreenedStock:
     news: list[str]
 
 
-def _screen_by_price(constituents: list[universe.Constituent]) -> list[tuple[universe.Constituent, market_data.PriceRangeSnapshot]]:
+@dataclass
+class PriceScreenResult:
+    passed: list[tuple[universe.Constituent, market_data.PriceRangeSnapshot]]
+    fetch_failed: list[str]  # "종목명(코드)" 목록 — 52주 고저/현재가 조회 자체가 실패한 종목
+    out_of_range: int  # 조회는 성공했지만 20~50% 구간 밖인 종목 수
+
+
+def _screen_by_price(constituents: list[universe.Constituent]) -> PriceScreenResult:
     passed = []
+    fetch_failed = []
+    out_of_range = 0
     for c in constituents:
         snap = market_data.get_price_and_52w_range(c.code)
         if snap is None:
+            fetch_failed.append(f"{c.name}({c.code})")
             continue
         if DECLINE_MIN_PCT <= snap.pct_below_52w_high < DECLINE_MAX_PCT:
             passed.append((c, snap))
-    return passed
+        else:
+            out_of_range += 1
+    return PriceScreenResult(passed=passed, fetch_failed=fetch_failed, out_of_range=out_of_range)
 
 
 def _screen_by_technical(
@@ -194,11 +206,21 @@ def main() -> int:
     constituents = universe.get_universe()
     log_lines.append(f"[유니버스] 코스피200+코스닥150 {len(constituents)}종목 조회")
 
-    price_passed = _screen_by_price(constituents)
+    price_screen = _screen_by_price(constituents)
+    price_passed = price_screen.passed
     log_lines.append(
-        f"[1차:가격] 52주 고점 대비 -{DECLINE_MIN_PCT:.0f}~{DECLINE_MAX_PCT:.0f}% 구간 {len(price_passed)}종목: "
+        f"[1차:가격] 조회성공 {len(constituents) - len(price_screen.fetch_failed)}/{len(constituents)}종목 "
+        f"(조회실패 {len(price_screen.fetch_failed)}건) → 구간 밖 제외 {price_screen.out_of_range}건 "
+        f"→ -{DECLINE_MIN_PCT:.0f}~{DECLINE_MAX_PCT:.0f}% 구간 통과 {len(price_passed)}종목: "
         f"{[c.name for c, _ in price_passed]}"
     )
+    if price_screen.fetch_failed:
+        log_lines.append(f"[1차:가격][조회실패 샘플] {price_screen.fetch_failed[:10]}")
+    if len(constituents) > 0 and len(price_screen.fetch_failed) == len(constituents):
+        log_lines.append(
+            "[1차:가격][경고] 전종목 조회 실패 — market_data.get_price_and_52w_range의 "
+            "셀렉터/정규식이 실제 페이지 구조와 안 맞을 가능성이 높음 (구간 기준 문제 아님)"
+        )
 
     technical_passed = _screen_by_technical(price_passed)
     log_lines.append(
