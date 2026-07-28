@@ -41,7 +41,9 @@ def _fetch_naver_index_constituents(naver_type: str, market_label: str) -> list[
         resp = requests.get(url, headers=_HEADERS, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
-        links = soup.select("table.type_5 a.tltle")
+        # 2026-07-28 실전 진단: table class는 type_5가 아니라 type_1이고, 종목명 링크에
+        # a.tltle 클래스가 없다. "code=" 포함 링크로 직접 찾는 게 구조 변경에 안전하다.
+        links = [a for a in soup.select("table.type_1 a") if "code=" in a.get("href", "")]
         if not links:
             break
 

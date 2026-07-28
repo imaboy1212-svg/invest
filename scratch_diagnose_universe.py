@@ -36,9 +36,15 @@ def check(label: str, url: str) -> None:
         for a in code_links[:8]:
             print("   ", a.get_text(strip=True), a.get("href"))
 
+        if len(resp.text) < 5000:
+            print("--- 응답 본문 전체(짧아서 그대로 출력) ---")
+            print(resp.text)
+
     except Exception as exc:
         print("요청 실패:", type(exc).__name__, exc)
 
 
 check("코스피200 (type=KPI200)", "https://finance.naver.com/sise/entryJongmok.naver?type=KPI200&page=1")
 check("코스닥150 (type=KOSDAQ150)", "https://finance.naver.com/sise/entryJongmok.naver?type=KOSDAQ150&page=1")
+check("코스닥150 대안1 (type=KOSDAQ150ㅡ오타 아닌 실제 후보 KDQ150)", "https://finance.naver.com/sise/entryJongmok.naver?type=KDQ150&page=1")
+check("코스닥150 대안2 (전체 코스닥 시가총액 상위)", "https://finance.naver.com/sise/sise_market_sum.naver?sosok=1&page=1")
