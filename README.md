@@ -61,8 +61,9 @@ RSI, MACD, 거래량, 볼린저밴드)까지 묶어 텔레그램으로 전송한
 
 ### 구성
 
-- `lib/universe.py` — 코스피200(네이버증권) + 코스닥150(네이버증권, 실패 시
-  `kosdaq150_constituents.json` 로컬 폴백) 구성종목 조회
+- `lib/universe.py` — 코스피200(네이버증권 entryJongmok.naver) + 코스닥150
+  (네이버증권에 전용 페이지가 없어 코스닥 시가총액 상위 150종목으로 근사,
+  그래도 실패 시 `kosdaq150_constituents.json` 로컬 폴백) 구성종목 조회
 - `lib/market_data.py`의 `get_price_and_52w_range()` — 현재가 + 52주 고저 조회
 - `lib/dart_client.py` — DART Open API로 종목코드→고유번호 매핑(로컬 캐시
   `dart_corp_codes.json`, git 미추적), 최근 공시, 최근 실적(YoY) 조회
@@ -74,18 +75,24 @@ topic_recommender.py의 "최근 선정 종목 제외(쿨다운)" 로직은 쓰�
 
 ### 필요한 것
 
-- `.env`(또는 PythonAnywhere 환경변수)에 `DART_API_KEY` 추가 — https://opendart.fss.or.kr 에서 무료 발급
-- 코스닥150 목록: 네이버증권 조회가 실패하면 `kosdaq150_constituents.json`을
-  KRX 지수정보시스템이나 KODEX 코스닥150 ETF 자산구성내역으로 채워야 함(반기 정기변경 때 갱신)
+- `.env`(또는 PythonAnywhere 환경변수)에 `DART_API_KEY` 추가 — https://opendart.fss.or.kr 에서 무료 발급.
+  **GitHub Actions로 검증할 때도 저장소 Secrets에 `DART_API_KEY`를 등록해야 한다** —
+  2026-07-28 첫 실전 실행 때 이 값이 비어 있어서(시크릿 미등록) 확인됨.
 
-### 검증 안내
+### 검증 이력 (2026-07-28 GitHub Actions 실전 실행)
 
-이 스크립트는 만들어진 시점의 실행 환경(클라우드 샌드박스)에서 외부 네트워크가
-프록시 정책으로 차단돼 있어 실제 크롤링 동작을 직접 확인하지 못했다.
-PythonAnywhere 등 실제 인터넷 접근이 되는 환경에서 첫 실행 후
-`logs/screener-YYYY-MM-DD.log`를 반드시 확인할 것 — 특히:
-- 코스닥150 네이버 조회가 실제로 되는지 (`[유니버스]` 로그)
-- DART 실적 계정명("매출액"/"영업이익"/"당기순이익")이 실제 응답과 맞는지 (`[DART]` 로그)
+- **코스피200**: entryJongmok.naver(type=KPI200) 정상 동작 확인. 다만 실제 table
+  class가 `type_5`가 아니라 `type_1`이고 종목명 링크에 `a.tltle` 클래스가 없어서
+  "code=" 포함 링크로 직접 추출하도록 `lib/universe.py` 수정 완료.
+- **코스닥150**: entryJongmok.naver에 `type=KOSDAQ150`, `type=KDQ150` 둘 다 시도했지만
+  실제 데이터가 아니라 네이버의 범용 에러 페이지("일시적 오류로 페이지 접속이
+  불가합니다")만 돌아옴 — 코스닥150 전용 조회 페이지 자체가 없는 것으로 판단.
+  대신 코스닥 시가총액 상위 150종목(`sise_market_sum.naver?sosok=1`, 3페이지)으로
+  근사하도록 수정 완료 (실제 종목명·코드 확인됨: 알테오젠, 에코프로비엠, 에코프로,
+  레인보우로보틱스 등).
+- **DART_API_KEY**: 이 실행에서 시크릿이 비어 있었음. 유니버스가 0건이라 실적
+  조회 단계까지 도달하지 못해 실제 DART API 동작 여부는 아직 확인 안 됨 — 시크릿
+  등록 후 재검증 필요.
 
 ### PythonAnywhere 배포 (기존 `invest/` 파이프라인과 분리)
 

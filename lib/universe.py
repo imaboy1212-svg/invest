@@ -1,17 +1,21 @@
 """코스피200·코스닥150 구성종목 유니버스 조회.
 
 코스피200은 네이버증권 entryJongmok.naver(type=KPI200)가 안정적으로 동작하는
-것으로 확인됐다 (기존 lib/stock_discovery.py 등에서 같은 도메인 크롤링 검증됨).
+것으로 확인됐다 (2026-07-28 실전 로그로 검증: table class는 type_1이고, 종목명
+링크에 a.tltle 클래스가 없어 "code=" 포함 링크로 직접 추출하도록 셀렉터를 고침).
 
-코스닥150은 네이버증권에 동일한 목적의 페이지(type=KOSDAQ150로 추정)가 있지만,
-이 저장소를 만든 시점에는 실행 환경의 네트워크 정책상 실제 응답을 직접 확인하지
-못했다 (프록시가 finance.naver.com으로의 외부 요청을 차단). 그래서:
-1) 우선 네이버 조회를 시도하고,
-2) 실패하거나 0건이면 로컬 백업 파일(kosdaq150_constituents.json)로 폴백한다.
+코스닥150은 네이버증권에 전용 조회 페이지 자체가 없다 — entryJongmok.naver에
+type=KOSDAQ150, type=KDQ150 둘 다 시도해봤지만 둘 다 실제 데이터가 아니라 네이버의
+범용 "일시적 오류로 페이지 접속이 불가합니다" 에러 페이지만 돌아온다(2026-07-28
+실전 로그로 확인, IP 차단이 아니라 애초에 무효한 파라미터로 판단됨 — 같은 실행에서
+바로 앞뒤로 호출한 코스피200/코스닥 시가총액 페이지는 정상 응답했음).
 
-폴백 파일은 코스닥150이 반기(6월/12월)마다 정기 변경되므로, 실패 로그가 찍히면
-KRX 지수정보시스템이나 KODEX 코스닥150 ETF PDF(자산구성내역)를 참고해 사람이
-수동으로 채워 넣어야 한다. 첫 실행 후 로그를 반드시 확인할 것.
+그래서 코스닥150 "지수 구성종목"을 정확히 가져오는 대신, **코스닥 시가총액 상위
+150종목**(sise_market_sum.naver?sosok=1, 페이지당 50개 × 3페이지)으로 근사한다.
+코스닥150 지수의 실제 구성 조건(유동성·거래대금 등)과 완전히 같지는 않지만, 이
+스크리너의 목적(저평가+실적개선 스캔) 기준으로는 실질적으로 거의 동일한 대형·
+중형 코스닥 종목군을 커버한다. 그래도 못 가져오면 로컬 백업 파일
+(kosdaq150_constituents.json)로 최종 폴백한다.
 """
 
 import json
@@ -77,17 +81,46 @@ def get_kospi200() -> list[Constituent]:
     return constituents
 
 
+_KOSDAQ_MARKET_CAP_PAGES = 3  # 페이지당 50종목 × 3 = 150종목(코스닥150 근사)
+
+
+def _fetch_kosdaq_market_cap_top(pages: int = _KOSDAQ_MARKET_CAP_PAGES) -> list[Constituent]:
+    """코스닥 시가총액 상위 종목으로 코스닥150을 근사한다 (entryJongmok.naver에
+    코스닥150 전용 페이지가 없어서 쓰는 대체 소스, lib/universe.py 모듈 docstring 참고)."""
+    result: list[Constituent] = []
+    seen_codes: set[str] = set()
+    for page in range(1, pages + 1):
+        url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok=1&page={page}"
+        resp = requests.get(url, headers=_HEADERS, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+        links = soup.select("table.type_2 a.tltle")
+        if not links:
+            break
+        for a in links:
+            name = a.get_text(strip=True)
+            href = a.get("href", "")
+            if "code=" not in href or not name:
+                continue
+            code = href.split("code=")[-1]
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+            result.append(Constituent(name=name, code=code, market="코스닥150"))
+    return result
+
+
 def get_kosdaq150() -> list[Constituent]:
     try:
-        constituents = _fetch_naver_index_constituents("KOSDAQ150", "코스닥150")
+        constituents = _fetch_kosdaq_market_cap_top()
     except Exception as exc:
-        print(f"[유니버스] 코스닥150 네이버 조회 실패: {type(exc).__name__}: {exc} — 폴백 파일 사용")
+        print(f"[유니버스] 코스닥150(시가총액 상위 근사) 조회 실패: {type(exc).__name__}: {exc} — 폴백 파일 사용")
         constituents = []
 
     if constituents:
         return constituents
 
-    print("[유니버스] 코스닥150 네이버 조회 0건 — 로컬 폴백 파일로 대체")
+    print("[유니버스] 코스닥150(시가총액 상위 근사) 조회 0건 — 로컬 폴백 파일로 대체")
     return _load_kosdaq150_fallback()
 
 
