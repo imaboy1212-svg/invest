@@ -117,6 +117,11 @@ def _naver_stock_news(code: str) -> list[str]:
     return headlines
 
 
+def get_stock_news(code: str, limit: int = NEWS_PER_STOCK) -> list[str]:
+    """개별 종목 뉴스·공시 헤드라인 조회 (stock_screener.py 등 다른 스크립트에서 재사용)."""
+    return _naver_stock_news(code)[:limit]
+
+
 def discover_candidates(data_date: date, exclude_names: set[str] | None = None) -> list[StockCandidate]:
     """네이버 인기종목 중 개별 종목 뉴스·공시가 실제로 있는 종목만 반환한다.
 

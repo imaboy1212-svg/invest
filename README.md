@@ -51,3 +51,49 @@ python topic_recommender.py
 ## 최근 종목리포트 종목 관리
 
 `recent_stock_picks.json`은 `completed_topics.json`과 달리 스크립트가 실행할 때마다 자동으로 기록·정리한다. 종목리포트로 다룬 종목명과 날짜를 저장해두고, 14일(약 2주) 이내에 이미 다룬 종목은 다음 발굴 후보에서 자동 제외한다. 2주가 지나면 자동으로 쿨다운이 풀려 다시 후보에 포함된다(중복 방지 목적일 뿐 영구 제외가 아니므로 이 정도 재선정은 허용). 수동으로 건드릴 필요 없음.
+
+## 저평가 스크리너 (`stock_screener.py`) — 별도 파이프라인
+
+topic_recommender.py와 완전히 독립된 스크립트다. 코스피200·코스닥150 구성종목 중
+**52주 최고가 대비 -50% 이상 하락 + 최근 실적(영업이익) 개선**이 둘 다 확인된 종목만
+골라, 종목별 최근 공시(DART)·뉴스(네이버)·보조지표(이동평균/골든·데드크로스,
+RSI, MACD, 거래량, 볼린저밴드)까지 묶어 텔레그램으로 전송한다.
+
+### 구성
+
+- `lib/universe.py` — 코스피200(네이버증권) + 코스닥150(네이버증권, 실패 시
+  `kosdaq150_constituents.json` 로컬 폴백) 구성종목 조회
+- `lib/market_data.py`의 `get_price_and_52w_range()` — 현재가 + 52주 고저 조회
+- `lib/dart_client.py` — DART Open API로 종목코드→고유번호 매핑(로컬 캐시
+  `dart_corp_codes.json`, git 미추적), 최근 공시, 최근 실적(YoY) 조회
+- `lib/technical_indicators.py` — Yahoo Finance 가격 시계열로 보조지표 계산
+- `stock_screener.py` — 위를 엮어 필터링 → 마크다운 리포트 생성 → 텔레그램 전송
+
+topic_recommender.py의 "최근 선정 종목 제외(쿨다운)" 로직은 쓰지 않는다 — 조건을
+만족하는 종목은 매일 그대로 다시 보여준다(공시·뉴스·지표는 매일 바뀌므로).
+
+### 필요한 것
+
+- `.env`(또는 PythonAnywhere 환경변수)에 `DART_API_KEY` 추가 — https://opendart.fss.or.kr 에서 무료 발급
+- 코스닥150 목록: 네이버증권 조회가 실패하면 `kosdaq150_constituents.json`을
+  KRX 지수정보시스템이나 KODEX 코스닥150 ETF 자산구성내역으로 채워야 함(반기 정기변경 때 갱신)
+
+### 검증 안내
+
+이 스크립트는 만들어진 시점의 실행 환경(클라우드 샌드박스)에서 외부 네트워크가
+프록시 정책으로 차단돼 있어 실제 크롤링 동작을 직접 확인하지 못했다.
+PythonAnywhere 등 실제 인터넷 접근이 되는 환경에서 첫 실행 후
+`logs/screener-YYYY-MM-DD.log`를 반드시 확인할 것 — 특히:
+- 코스닥150 네이버 조회가 실제로 되는지 (`[유니버스]` 로그)
+- DART 실적 계정명("매출액"/"영업이익"/"당기순이익")이 실제 응답과 맞는지 (`[DART]` 로그)
+
+### PythonAnywhere 배포 (기존 `invest/` 파이프라인과 분리)
+
+1. Files 탭에서 새 디렉토리 생성(예: `invest-screener/`)
+2. Bash 콘솔에서 `git clone` (또는 기존 저장소를 이 디렉토리에 새로 clone)
+3. `cp .env.example .env` 후 `GEMINI_API_KEY`는 필요 없고 `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_CHAT_ID`, `DART_API_KEY` 채워 넣기 (텔레그램 토큰은 기존 파이프라인과
+   같은 채널을 쓸지, 별도 채널을 쓸지 선택 — 같은 채널이면 기존 `.env` 값 그대로 복사)
+4. `pip install -r requirements.txt`
+5. Tasks 탭에서 새 예약 작업 추가: `cd ~/invest-screener && git pull && python3 stock_screener.py`
+   (기존 `invest/` 디렉토리의 예약 작업과 완전히 분리되어 있어 서로 영향 없음)

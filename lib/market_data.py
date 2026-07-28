@@ -163,6 +163,52 @@ def get_stock_snapshot(stock_name: str, data_date: date, code: str) -> PriceQuot
     return quote
 
 
+@dataclass
+class PriceRangeSnapshot:
+    current: float
+    high_52w: float
+    low_52w: float
+
+    @property
+    def pct_below_52w_high(self) -> float:
+        """52주 최고가 대비 하락률(%). 예: 51.9 → 고점 대비 51.9% 하락."""
+        return (self.high_52w - self.current) / self.high_52w * 100
+
+
+def get_price_and_52w_range(code: str) -> PriceRangeSnapshot | None:
+    """네이버증권 종목 페이지에서 현재가 + 52주최고/최저를 한 번의 요청으로 조회한다.
+
+    정확한 마크업(클래스명 등)이 페이지 개편으로 바뀔 수 있어, 52주 고저는 태그
+    셀렉터 대신 페이지 전체 텍스트를 공백으로 이어붙인 뒤 "52주최고"/"52주최저"
+    뒤에 오는 숫자를 정규식으로 뽑는 방식을 쓴다 (news_crawler.py의 방어적 파싱과
+    같은 원칙). 현재가는 기존 _fetch_naver_stock과 동일한 셀렉터를 재사용한다.
+    """
+    url = f"https://finance.naver.com/item/main.naver?code={code}"
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        price_tag = soup.select_one(".no_today .blind")
+        if not price_tag:
+            print(f"[52주고저] 현재가 셀렉터 매칭 실패(code={code})")
+            return None
+        current = float(price_tag.get_text(strip=True).replace(",", ""))
+
+        flat_text = soup.get_text(" ", strip=True)
+        high_match = re.search(r"52주최고\s*([\d,]+)", flat_text)
+        low_match = re.search(r"52주최저\s*([\d,]+)", flat_text)
+        if not high_match or not low_match:
+            print(f"[52주고저] 패턴 매칭 실패(code={code}): {flat_text[:200]!r}")
+            return None
+        high = float(high_match.group(1).replace(",", ""))
+        low = float(low_match.group(1).replace(",", ""))
+        return PriceRangeSnapshot(current=current, high_52w=high, low_52w=low)
+    except Exception as exc:
+        print(f"[52주고저] 조회 실패(code={code}): {type(exc).__name__}: {exc}")
+        return None
+
+
 def _fetch_naver_stock(code: str) -> tuple[float, float]:
     url = f"https://finance.naver.com/item/main.naver?code={code}"
     resp = requests.get(url, headers=_HEADERS, timeout=10)

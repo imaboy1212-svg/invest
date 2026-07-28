@@ -1,0 +1,38 @@
+name: 저평가 스크리너
+
+on:
+  # 실제 운영은 PythonAnywhere 예약 작업(Tasks)에서 담당한다 (topic_recommender.yml과
+  # 동일한 이유로 자동 스케줄은 꺼두고, 수동 트리거(workflow_dispatch)로 코드 검증할
+  # 때만 쓴다).
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run stock screener
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+        run: python stock_screener.py
+
+      - name: Commit reports + logs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add screener_reports/ logs/
+          git diff --cached --quiet || git commit -m "chore: 저평가 스크리너 결과 자동 생성 ($(date -u +%Y-%m-%d))"
+          git push
