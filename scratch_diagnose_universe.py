@@ -40,5 +40,15 @@ def check(label: str, url: str) -> None:
         print("요청 실패:", type(exc).__name__, exc)
 
 
-check("코스피200 (type=KPI200)", "https://finance.naver.com/sise/entryJongmok.naver?type=KPI200&page=1")
-check("코스닥150 (type=KOSDAQ150)", "https://finance.naver.com/sise/entryJongmok.naver?type=KOSDAQ150&page=1")
+check("코스피200 (type=KPI200) - 확인용, 이미 정상 동작 확인됨", "https://finance.naver.com/sise/entryJongmok.naver?type=KPI200&page=1")
+
+# 코스닥150(type=KOSDAQ150)은 200 응답이지만 빈 페이지였다. entryJongmok.naver가
+# 실제로 지원하는 type 값이 무엇인지 몇 가지 후보를 더 찔러본다.
+for candidate in ["KOSDAQ150", "KQ150", "KDQ150", "KOSDAQ", "150"]:
+    check(f"코스닥150 후보 (type={candidate})", f"https://finance.naver.com/sise/entryJongmok.naver?type={candidate}&page=1")
+
+# 네이버증권 지수 상세 페이지 쪽에 구성종목 탭이 있는지도 확인
+check(
+    "코스닥150 지수 상세 페이지(sise_index_detail)",
+    "https://finance.naver.com/sise/sise_index_detail.naver?code=KOSDAQ150",
+)

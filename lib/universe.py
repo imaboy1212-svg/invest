@@ -23,7 +23,10 @@ from bs4 import BeautifulSoup
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 _KOSDAQ150_FALLBACK_PATH = Path(__file__).resolve().parent.parent / "kosdaq150_constituents.json"
-_MAX_PAGES = 12  # 코스피200/코스닥150 모두 페이지당 종목 수 감안한 안전 상한
+# 2026-07-28 PythonAnywhere 실행 로그로 실제 구조 확인: entryJongmok.naver?type=KPI200 페이지는
+# a.tltle 클래스 없이 table.type_1 안에 "code=" 링크(페이지당 10개)만 있다. 200종목이면
+# 최대 20페이지가 필요해 _MAX_PAGES를 넉넉히 잡는다 (실제로는 더 없으면 조기 종료됨).
+_MAX_PAGES = 30
 
 
 @dataclass
@@ -34,6 +37,13 @@ class Constituent:
 
 
 def _fetch_naver_index_constituents(naver_type: str, market_label: str) -> list[Constituent]:
+    """entryJongmok.naver?type=... 페이지에서 종목명/코드를 뽑는다.
+
+    2026-07-28 실제 운영 환경 로그로 확인된 구조: 종목 링크에 별도 클래스(a.tltle 등)가
+    없고, table.type_1 안에 href="...?code=XXXXXX" 형태 링크만 있다(페이지당 10개).
+    클래스명이 또 바뀔 수 있으니 table.type_1 스코프 안의 "code=" 링크 전부를 대상으로
+    하는 방식으로 짜서, 클래스명 자체보다 안정적인 href 패턴에 의존한다.
+    """
     result: list[Constituent] = []
     seen_codes: set[str] = set()
     for page in range(1, _MAX_PAGES + 1):
@@ -41,15 +51,18 @@ def _fetch_naver_index_constituents(naver_type: str, market_label: str) -> list[
         resp = requests.get(url, headers=_HEADERS, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
-        links = soup.select("table.type_5 a.tltle")
-        if not links:
+
+        table = soup.select_one("table.type_1")
+        links = table.find_all("a", href=True) if table else []
+        code_links = [a for a in links if "code=" in a["href"]]
+        if not code_links:
             break
 
         new_on_this_page = 0
-        for a in links:
+        for a in code_links:
             name = a.get_text(strip=True)
-            href = a.get("href", "")
-            if "code=" not in href or not name:
+            href = a["href"]
+            if not name:
                 continue
             code = href.split("code=")[-1]
             if code in seen_codes:
