@@ -178,10 +178,13 @@ class PriceRangeSnapshot:
 def get_price_and_52w_range(code: str) -> PriceRangeSnapshot | None:
     """네이버증권 종목 페이지에서 현재가 + 52주최고/최저를 한 번의 요청으로 조회한다.
 
-    정확한 마크업(클래스명 등)이 페이지 개편으로 바뀔 수 있어, 52주 고저는 태그
-    셀렉터 대신 페이지 전체 텍스트를 공백으로 이어붙인 뒤 "52주최고"/"52주최저"
-    뒤에 오는 숫자를 정규식으로 뽑는 방식을 쓴다 (news_crawler.py의 방어적 파싱과
-    같은 원칙). 현재가는 기존 _fetch_naver_stock과 동일한 셀렉터를 재사용한다.
+    2026-07-29 실전 진단(scratch_diagnose_52w.py)으로 확인한 실제 표기 형태:
+    "52주최고 l 최저 374,500 l 67,500" 처럼 최고/최저 라벨이 하나로 합쳐져 있고,
+    그 뒤에 최고가·최저가 숫자가 순서대로 붙어 나온다(각 라벨 바로 뒤에 자기 숫자가
+    오는 게 아니었다). 정확한 마크업(클래스명 등)이 페이지 개편으로 또 바뀔 수 있어
+    태그 셀렉터 대신 페이지 전체 텍스트를 공백으로 이어붙인 뒤 이 순서 그대로 숫자
+    두 개를 뽑는 정규식을 쓴다. 현재가는 기존 _fetch_naver_stock과 동일한 셀렉터를
+    재사용한다.
     """
     url = f"https://finance.naver.com/item/main.naver?code={code}"
     try:
@@ -196,15 +199,15 @@ def get_price_and_52w_range(code: str) -> PriceRangeSnapshot | None:
         current = float(price_tag.get_text(strip=True).replace(",", ""))
 
         flat_text = soup.get_text(" ", strip=True)
-        # "52주" 와 "최고"/"최저" 사이에 공백이 있을 수도(자연스러운 한국어 표기),
-        # 없을 수도(마크업이 한 태그에 붙여 넣은 경우) 있어 \s*로 둘 다 받는다.
-        high_match = re.search(r"52\s*주\s*최고\s*([\d,]+)", flat_text)
-        low_match = re.search(r"52\s*주\s*최저\s*([\d,]+)", flat_text)
-        if not high_match or not low_match:
-            print(f"[52주고저] 패턴 매칭 실패(code={code}): {flat_text[:200]!r}")
+        # "52주최고 l 최저 374,500 l 67,500" 형태 — 라벨 두 개가 붙어 있고 그 뒤에
+        # 최고가·최저가 숫자가 순서대로 온다. 라벨 사이/숫자 사이 구분자(" l " 등)는
+        # 숫자가 아닌 아무 문자로 취급해 마크업이 바뀌어도 견고하게 매칭한다.
+        match = re.search(r"52\s*주\s*최고[^\d]*최저[^\d]*([\d,]+)[^\d]*([\d,]+)", flat_text)
+        if not match:
+            print(f"[52주고저] 패턴 매칭 실패(code={code}): {flat_text[:300]!r}")
             return None
-        high = float(high_match.group(1).replace(",", ""))
-        low = float(low_match.group(1).replace(",", ""))
+        high = float(match.group(1).replace(",", ""))
+        low = float(match.group(2).replace(",", ""))
         return PriceRangeSnapshot(current=current, high_52w=high, low_52w=low)
     except Exception as exc:
         print(f"[52주고저] 조회 실패(code={code}): {type(exc).__name__}: {exc}")
