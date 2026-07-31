@@ -103,9 +103,20 @@ def _load_corp_code_cache() -> dict:
 
 
 def _download_corp_codes() -> dict:
-    """corpCode.xml(zip)을 받아 stock_code(6자리) -> corp_code(8자리) 매핑을 만들고 캐시한다."""
-    resp = requests.get(f"{_BASE_URL}/corpCode.xml", params={"crtfc_key": _api_key()}, timeout=30)
-    resp.raise_for_status()
+    """corpCode.xml(zip)을 받아 stock_code(6자리) -> corp_code(8자리) 매핑을 만들고 캐시한다.
+
+    이 함수만 요청 자체에 try/except가 없어서(다른 DART 함수들과 다르게), DART
+    서버 응답이 느리거나(타임아웃) 네트워크 문제가 있을 때 예외가 호출부까지
+    전파돼 전체 분석(가격·재무지표·적정주가까지)이 통째로 죽는 버그가 있었다
+    (2026-07-31 두산에너빌리티 실전 실행에서 opendart.fss.or.kr 연결 타임아웃으로
+    확인). 다른 DART 함수들과 같은 방어 패턴으로 맞춘다 — 참고정보(실적/공시)
+    조회 실패가 핵심 결과를 무너뜨리면 안 된다."""
+    try:
+        resp = requests.get(f"{_BASE_URL}/corpCode.xml", params={"crtfc_key": _api_key()}, timeout=30)
+        resp.raise_for_status()
+    except Exception as exc:
+        print(f"[DART] 고유번호 목록 다운로드 실패: {type(exc).__name__}: {exc}")
+        return {}
 
     try:
         with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
