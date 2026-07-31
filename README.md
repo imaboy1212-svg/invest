@@ -164,21 +164,83 @@ python3 stock_analyzer.py 005930 --telegram  # 텔레그램으로도 전송
 ### 구성
 
 - `lib/stock_search.py` — 종목명/종목코드 → (정식 종목명, 종목코드) 해석
-  (6자리 숫자면 코드로 바로 취급, 그 외는 네이버증권 검색 결과 첫 매칭 채택)
-- `lib/fundamentals.py` — 네이버증권 "기업현황" 탭에서 PER·EPS·PBR·BPS·동일업종
-  PER·배당수익률 조회
+  (6자리 숫자면 코드로 바로 취급, 그 외는 코스피200+코스닥150 유니버스에서 이름
+  매칭 → 유니버스 밖 종목은 모바일 자동완성 API를 최후 수단으로 시도)
+- `lib/fundamentals.py` — 네이버증권 "기업현황" 탭(`table.per_table`)에서
+  PER·EPS·PBR·BPS·동일업종PER·배당수익률 조회
 - `lib/valuation.py` — 위 데이터로 적정주가 산출 + 판정
 - `lib/market_data.py`의 `get_price_and_52w_range()` — 현재가 + 52주 고저 (기존 재사용)
 - `lib/technical_indicators.py`, `lib/dart_client.py`, `lib/stock_discovery.py` —
   참고정보(기술적 지표, 실적/공시, 뉴스) 조회 (기존 재사용)
-- `stock_analyzer.py` — 위를 엮어 마크다운 리포트 생성 (`analysis_reports/`에 저장) +
+- `lib/analysis.py` — 위 조회들을 종목 해석→적정주가 산출까지 한 번에 묶는
+  공유 파이프라인. `stock_analyzer.py`(CLI)와 `api_server.py`(위젯 API) 둘 다
+  이걸 쓴다.
+- `stock_analyzer.py` — CLI. 마크다운 리포트 생성(`analysis_reports/`에 저장) +
   콘솔 출력, `--telegram` 옵션으로 텔레그램 전송
+- `api_server.py`, `widgets/stock_analyzer_widget.html` — bestwellth.org 위젯용
+  (아래 절 참고)
 
-### 검증 필요 (2026-07-31 작성, 아직 실전 미검증)
+### 실전 검증 완료 (2026-07-31, GitHub Actions workflow_dispatch)
 
-`lib/fundamentals.py`, `lib/stock_search.py`는 개발 환경 네트워크 제한으로 실제
-네이버증권 페이지 마크업을 직접 확인하지 못한 채 작성됐다. `lib/market_data.py`의
-52주 고저 조회가 그랬던 것처럼 실제 마크업이 예상과 다를 가능성이 있다.
-`.github/workflows/stock_analyzer.yml`(workflow_dispatch, 종목명 입력)로 실행해
-로그를 확인하고, 라벨을 못 찾으면 해당 모듈의 `_num_after` 탐색 범위/로직을
-실제 구조에 맞게 조정할 것.
+삼성전자(005930)로 전체 파이프라인 실전 검증 완료. 검증 과정에서 잡은 버그 2건:
+
+- **종목명 검색 404**: `finance.naver.com/search/searchList.naver`는 존재하지
+  않는 URL이었음 — 코스피200/코스닥150 유니버스 기반 검색으로 교체(`lib/stock_search.py`).
+- **PER/EPS/PBR/BPS가 전부 같은 값으로 나오는 버그**: `table.per_table` 안에서
+  각 라벨(`PER l EPS` 등) 뒤에 계산식 설명 문단이 먼저 오고, 실제 값은 그 뒤에
+  `"20.61 배 l 12,372 원"` 형태로 나온다. 라벨 바로 뒤 숫자를 찾던 초기 버전은
+  설명 문단 속 기준연월(`"(2026.03)"`)을 값으로 잘못 읽어왔음 — 값 자체의 형태로
+  직접 찾도록 `lib/fundamentals.py` 수정.
+
+검증 결과 예시(삼성전자, 실제 실행 로그): 현재가 257,500원 / PER 20.81배·EPS
+12,372원 / PBR 3.58배·BPS 71,907원 / 동일업종 PER 13.47배 → PER 밸류에이션
+166,651원, 그레이엄 공식 141,481원 → 평균 154,066원, 괴리율 -40.2% → 고평가.
+PER·PBR 역산값이 원본 데이터와 정확히 일치해 파싱 정합성 확인됨.
+
+## 종목분석기 위젯 API (`api_server.py`) — bestwellth.org 임베드용
+
+`stock_analyzer.py`(CLI)와 같은 `lib/analysis.py` 파이프라인을 쓰는 Flask API.
+종목명을 입력하면 적정주가 판정 결과를 JSON으로 반환한다 — bestwellth.org
+워드프레스 글에 `widgets/stock_analyzer_widget.html`을 커스텀 HTML 블록으로
+붙여넣으면 이 API를 호출해서 위젯 형태로 보여준다.
+
+응답 속도를 위해 DART 실적/공시·뉴스 조회는 건너뛴다(밸류에이션 판정에 반영되지
+않는 참고정보라 위젯에는 불필요 — 상세 리포트가 필요하면 CLI를 쓴다).
+
+### PythonAnywhere 배포
+
+1. 기존 `invest/` 디렉토리(또는 별도 디렉토리)에서 최신 코드 `git pull`,
+   `pip install -r requirements.txt`로 `flask` 설치
+2. Web 탭 → **Add a new web app** → Flask 선택 → Python 3.11 선택
+   (계정당 무료 플랜은 웹앱 1개까지 — 이미 다른 웹앱을 쓰고 있으면 유료 플랜 필요)
+3. 생성된 WSGI 설정 파일(`/var/www/<계정명>_pythonanywhere_com_wsgi.py`)을 열어
+   아래처럼 이 저장소의 `api_server.py`를 가리키도록 수정:
+   ```python
+   import sys
+   path = "/home/<계정명>/invest"  # git clone한 실제 경로로 변경
+   if path not in sys.path:
+       sys.path.insert(0, path)
+   from api_server import app as application
+   ```
+4. Web 탭의 **Code** 섹션에서 Source code/Working directory를 저장소 경로로 지정
+5. Web 탭 **Reload** 버튼으로 반영 → `https://<계정명>.pythonanywhere.com/api/health`
+   접속해 `{"status": "ok"}` 확인
+6. `https://<계정명>.pythonanywhere.com/api/analyze?stock=삼성전자`로 실제 응답 확인
+
+무료 플랜은 외부 사이트 접근이 화이트리스트로 제한되는데, 기존 `invest/`
+예약 작업(Tasks)이 이미 네이버증권 접근에 성공하고 있으므로 같은 계정이면
+추가 설정 없이 동작할 것으로 예상 — 그래도 5번 단계에서 반드시 직접 확인할 것.
+
+### bestwellth.org에 위젯 삽입
+
+1. `widgets/stock_analyzer_widget.html` 파일을 열어 최상단 안내대로
+   `API_BASE` 값을 실제 PythonAnywhere 주소로 교체
+2. 워드프레스 글/페이지 편집 화면에서 **커스텀 HTML** 블록 추가 → 파일 내용
+   전체를 그대로 붙여넣기
+3. `api_server.py`의 `_ALLOWED_ORIGINS`에 실제 워드프레스 도메인이 들어있는지
+   확인 (기본값 `https://bestwellth.org`, `https://www.bestwellth.org` — 다르면
+   수정 후 재배포)
+
+위젯은 종목명이 코스피200/코스닥150 밖(중·소형주)이면 못 찾을 수 있다
+(`lib/stock_search.py`의 유니버스 기반 검색 한계) — 그런 경우는 "종목을 찾을 수
+없습니다" 오류가 뜬다.

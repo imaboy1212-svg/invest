@@ -1,0 +1,315 @@
+<!--
+  bestwellth.org 종목분석기 위젯 — 워드프레스 "커스텀 HTML" 블록에 이 파일
+  내용을 그대로 붙여넣으면 된다.
+
+  사용 전 아래 API_BASE 값을 실제 PythonAnywhere 배포 주소로 바꿀 것.
+  (README.md "종목분석기 위젯 API" 절 — PythonAnywhere Web App 배포 후
+  https://<계정명>.pythonanywhere.com 형태의 주소가 생긴다.)
+
+  투자 조언이 아니라는 문구를 의도적으로 넣어뒀다 — 공개 위젯에서 특정
+  종목의 "고평가/저평가" 판정을 보여주는 만큼, 이 결과가 참고용 계산일 뿐
+  매수/매도 추천이 아니라는 점을 명확히 해야 한다.
+-->
+<div id="stock-analyzer-widget" class="saw-root">
+  <style>
+    #stock-analyzer-widget.saw-root {
+      max-width: 560px;
+      margin: 0 auto;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, Roboto, sans-serif;
+      color: #1a1a1a;
+      box-sizing: border-box;
+    }
+    #stock-analyzer-widget * {
+      box-sizing: border-box;
+    }
+    #stock-analyzer-widget .saw-form {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    #stock-analyzer-widget input[type="text"] {
+      flex: 1;
+      padding: 12px 14px;
+      font-size: 16px;
+      border: 1px solid #d8d8d8;
+      border-radius: 8px;
+      outline: none;
+    }
+    #stock-analyzer-widget input[type="text"]:focus {
+      border-color: #2f6fed;
+    }
+    #stock-analyzer-widget button {
+      padding: 12px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      background: #2f6fed;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #stock-analyzer-widget button:disabled {
+      background: #a9bdea;
+      cursor: default;
+    }
+    #stock-analyzer-widget .saw-hint {
+      font-size: 13px;
+      color: #888;
+      margin: -10px 0 18px;
+    }
+    #stock-analyzer-widget .saw-status {
+      font-size: 14px;
+      color: #666;
+      padding: 8px 0;
+    }
+    #stock-analyzer-widget .saw-error {
+      font-size: 14px;
+      color: #c0392b;
+      background: #fdf1f0;
+      border: 1px solid #f3c8c4;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    #stock-analyzer-widget .saw-card {
+      border: 1px solid #e6e6e6;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    #stock-analyzer-widget .saw-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 4px;
+    }
+    #stock-analyzer-widget .saw-name {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    #stock-analyzer-widget .saw-code {
+      font-size: 13px;
+      color: #999;
+    }
+    #stock-analyzer-widget .saw-badge {
+      display: inline-block;
+      margin: 10px 0 16px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    #stock-analyzer-widget .saw-badge.under { background: #e6f4ea; color: #1e7e34; }
+    #stock-analyzer-widget .saw-badge.over  { background: #fdecea; color: #c0392b; }
+    #stock-analyzer-widget .saw-badge.fair  { background: #eaf1fd; color: #2f6fed; }
+    #stock-analyzer-widget .saw-badge.unknown { background: #f0f0f0; color: #666; }
+    #stock-analyzer-widget .saw-price-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-top: 1px solid #f0f0f0;
+      font-size: 14px;
+    }
+    #stock-analyzer-widget .saw-price-row .saw-label { color: #777; }
+    #stock-analyzer-widget .saw-price-row .saw-value { font-weight: 600; }
+    #stock-analyzer-widget .saw-gap-pos { color: #1e7e34; }
+    #stock-analyzer-widget .saw-gap-neg { color: #c0392b; }
+    #stock-analyzer-widget .saw-section-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #555;
+      margin: 18px 0 8px;
+    }
+    #stock-analyzer-widget .saw-method-row {
+      font-size: 13px;
+      color: #555;
+      padding: 4px 0;
+    }
+    #stock-analyzer-widget .saw-range-bar {
+      position: relative;
+      height: 6px;
+      border-radius: 3px;
+      background: #eee;
+      margin: 8px 0 4px;
+    }
+    #stock-analyzer-widget .saw-range-dot {
+      position: absolute;
+      top: -4px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #2f6fed;
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 1px #2f6fed;
+      transform: translateX(-50%);
+    }
+    #stock-analyzer-widget .saw-range-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #999;
+    }
+    #stock-analyzer-widget .saw-fund-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 16px;
+      font-size: 13px;
+    }
+    #stock-analyzer-widget .saw-fund-grid .saw-label { color: #888; }
+    #stock-analyzer-widget .saw-signals {
+      font-size: 13px;
+      color: #555;
+      padding-left: 18px;
+      margin: 4px 0 0;
+    }
+    #stock-analyzer-widget .saw-disclaimer {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 16px;
+      line-height: 1.5;
+    }
+  </style>
+
+  <div class="saw-form">
+    <input type="text" id="saw-input" placeholder="종목명 또는 종목코드 (예: 삼성전자, 005930)" />
+    <button id="saw-submit" type="button">적정가 분석</button>
+  </div>
+  <div class="saw-hint">코스피/코스닥 상장 종목만 지원합니다.</div>
+
+  <div id="saw-result"></div>
+
+  <script>
+  (function () {
+    // TODO: PythonAnywhere 배포 후 실제 주소로 교체 (README "종목분석기 위젯 API" 참고)
+    var API_BASE = "https://YOUR_USERNAME.pythonanywhere.com";
+
+    var input = document.getElementById("saw-input");
+    var submitBtn = document.getElementById("saw-submit");
+    var resultEl = document.getElementById("saw-result");
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    function fmtWon(n) {
+      if (n === null || n === undefined) return "조회 실패";
+      return Math.round(n).toLocaleString("ko-KR") + "원";
+    }
+
+    function badgeClass(verdict) {
+      if (verdict === "저평가") return "under";
+      if (verdict === "고평가") return "over";
+      if (verdict === "적정 구간") return "fair";
+      return "unknown";
+    }
+
+    function renderRangeBar(current, low, high) {
+      var pct = 50;
+      if (high > low) {
+        pct = ((current - low) / (high - low)) * 100;
+        pct = Math.max(0, Math.min(100, pct));
+      }
+      return (
+        '<div class="saw-range-bar"><div class="saw-range-dot" style="left:' +
+        pct.toFixed(1) +
+        '%"></div></div>' +
+        '<div class="saw-range-labels"><span>52주 최저 ' +
+        fmtWon(low) +
+        "</span><span>52주 최고 " +
+        fmtWon(high) +
+        "</span></div>"
+      );
+    }
+
+    function render(data) {
+      var v = data.valuation;
+      var f = data.fundamentals;
+      var badge = badgeClass(v.verdict);
+      var gapClass = v.gap_pct === null ? "" : v.gap_pct >= 0 ? "saw-gap-pos" : "saw-gap-neg";
+      var gapText = v.gap_pct === null ? "" : (v.gap_pct > 0 ? "+" : "") + v.gap_pct.toFixed(1) + "%";
+
+      var html = '<div class="saw-card">';
+      html += '<div class="saw-card-header"><span class="saw-name">' + escapeHtml(data.name) + "</span>";
+      html += '<span class="saw-code">' + escapeHtml(data.code) + "</span></div>";
+      html += '<span class="saw-badge ' + badge + '">' + escapeHtml(v.verdict) + "</span>";
+
+      html += '<div class="saw-price-row"><span class="saw-label">현재가</span><span class="saw-value">' + fmtWon(data.current_price) + "</span></div>";
+      if (v.average_fair_price !== null) {
+        html += '<div class="saw-price-row"><span class="saw-label">적정주가 추정</span><span class="saw-value">' + fmtWon(v.average_fair_price) + "</span></div>";
+        html += '<div class="saw-price-row"><span class="saw-label">현재가 대비 괴리율</span><span class="saw-value ' + gapClass + '">' + gapText + "</span></div>";
+      }
+
+      if (v.estimates && v.estimates.length) {
+        html += '<div class="saw-section-title">산출 방식</div>';
+        v.estimates.forEach(function (e) {
+          html += '<div class="saw-method-row">' + escapeHtml(e.method) + ": <strong>" + fmtWon(e.fair_price) + "</strong> — " + escapeHtml(e.basis) + "</div>";
+        });
+      } else {
+        html += '<div class="saw-section-title">산출 가능한 밸류에이션 방법이 없습니다 (재무 데이터 부족)</div>';
+      }
+
+      html += '<div class="saw-section-title">52주 가격 위치</div>';
+      html += renderRangeBar(data.current_price, data.low_52w, data.high_52w);
+
+      if (f) {
+        html += '<div class="saw-section-title">재무 데이터 (네이버증권)</div>';
+        html += '<div class="saw-fund-grid">';
+        html += '<div><span class="saw-label">PER</span> ' + (f.per !== null ? f.per.toFixed(2) + "배" : "-") + "</div>";
+        html += '<div><span class="saw-label">동일업종 PER</span> ' + (f.industry_per !== null ? f.industry_per.toFixed(2) + "배" : "-") + "</div>";
+        html += '<div><span class="saw-label">PBR</span> ' + (f.pbr !== null ? f.pbr.toFixed(2) + "배" : "-") + "</div>";
+        html += '<div><span class="saw-label">배당수익률</span> ' + (f.dividend_yield_pct !== null ? f.dividend_yield_pct.toFixed(2) + "%" : "-") + "</div>";
+        html += "</div>";
+      }
+
+      if (data.technical_signals && data.technical_signals.length) {
+        html += '<div class="saw-section-title">참고: 기술적 신호</div>';
+        html += '<ul class="saw-signals">';
+        data.technical_signals.forEach(function (s) {
+          html += "<li>" + escapeHtml(s) + "</li>";
+        });
+        html += "</ul>";
+      }
+
+      html += '<div class="saw-disclaimer">본 결과는 EPS·BPS·동일업종 PER 등 공개된 재무 데이터를 이용한 참고용 계산이며, 투자 조언이나 매수·매도 추천이 아닙니다. 투자 판단과 책임은 본인에게 있습니다.</div>';
+      html += "</div>";
+
+      resultEl.innerHTML = html;
+    }
+
+    function renderError(message) {
+      resultEl.innerHTML = '<div class="saw-error">' + escapeHtml(message) + "</div>";
+    }
+
+    function analyze() {
+      var query = input.value.trim();
+      if (!query) {
+        renderError("종목명 또는 종목코드를 입력해 주세요.");
+        return;
+      }
+      submitBtn.disabled = true;
+      resultEl.innerHTML = '<div class="saw-status">분석 중입니다… (최대 몇 초 걸릴 수 있습니다)</div>';
+
+      fetch(API_BASE + "/api/analyze?stock=" + encodeURIComponent(query))
+        .then(function (resp) {
+          return resp.json().then(function (body) {
+            if (!resp.ok) throw new Error(body.error || "분석에 실패했습니다.");
+            return body;
+          });
+        })
+        .then(render)
+        .catch(function (err) {
+          renderError(err.message || "분석 중 오류가 발생했습니다.");
+        })
+        .finally(function () {
+          submitBtn.disabled = false;
+        });
+    }
+
+    submitBtn.addEventListener("click", analyze);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") analyze();
+    });
+  })();
+  </script>
+</div>
