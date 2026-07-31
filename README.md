@@ -127,3 +127,58 @@ topic_recommender.py의 "최근 선정 종목 제외(쿨다운)" 로직은 쓰�
 4. `pip install -r requirements.txt`
 5. Tasks 탭에서 새 예약 작업 추가: `cd ~/invest-screener && git pull && python3 stock_screener.py`
    (기존 `invest/` 디렉토리의 예약 작업과 완전히 분리되어 있어 서로 영향 없음)
+
+## 종목분석기 — 적정주가 판단 (`stock_analyzer.py`) — 별도 파이프라인
+
+topic_recommender.py, stock_screener.py와 완전히 독립된 세 번째 파이프라인이다.
+스케줄 배치가 아니라 **종목 하나를 지정해 그때그때 실행하는 도구**다 — 종목명 또는
+종목코드를 입력하면 객관적 재무 데이터로 적정주가를 산출해 현재가와 비교하고
+저평가/고평가/적정 구간을 판정한다.
+
+```bash
+python3 stock_analyzer.py 삼성전자          # 콘솔 출력 + analysis_reports/에 저장
+python3 stock_analyzer.py 005930 --telegram  # 텔레그램으로도 전송
+```
+
+### 밸류에이션 방법 (`lib/valuation.py`)
+
+성장률 전망 같은 주관적 가정이 필요한 방법(DCF, 배당할인모형)은 쓰지 않는다.
+공시된 재무 데이터만으로 계산 가능한 2가지만 각각 독립적으로 산출해 평균을 낸다.
+
+1. **PER 밸류에이션** — EPS × 동일업종 PER (같은 업종에 시장이 실제로 매기는
+   배수를 그대로 적용)
+2. **그레이엄 공식(Graham Number)** — sqrt(22.5 × EPS × BPS) (벤저민 그레이엄의
+   보수적 적정주가 상한선 공식, PER 15배 × PBR 1.5배 = 22.5 가정, 업종 비교 데이터
+   없이도 계산 가능)
+
+두 방법의 평균을 적정주가 추정치로 삼아 현재가 대비 괴리율(%)로 판정한다
+(+20%↑ 저평가 / -20%↓ 고평가 / 그 사이 적정 구간, `lib/valuation.py`의
+`GAP_UNDERVALUED_PCT`/`GAP_OVERVALUED_PCT`로 조정 가능). 필요한 데이터(EPS·BPS·
+동일업종 PER)가 없으면 해당 방법은 건너뛰고, 둘 다 산출 불가면 "판단 불가"로
+명시한다 — 근거 없이 숫자를 만들어내지 않는다(가이드 4-4 원칙).
+
+기술적 지표(RSI·이동평균 등)·직전 분기 실적·최근 공시·뉴스는 기존 lib를 재사용해
+참고정보로 함께 보여주지만 밸류에이션 판정에는 반영하지 않는다 — 가격 추세와
+적정가격은 별개 질문이라는 stock_screener.py와 같은 설계 원칙이다.
+
+### 구성
+
+- `lib/stock_search.py` — 종목명/종목코드 → (정식 종목명, 종목코드) 해석
+  (6자리 숫자면 코드로 바로 취급, 그 외는 네이버증권 검색 결과 첫 매칭 채택)
+- `lib/fundamentals.py` — 네이버증권 "기업현황" 탭에서 PER·EPS·PBR·BPS·동일업종
+  PER·배당수익률 조회
+- `lib/valuation.py` — 위 데이터로 적정주가 산출 + 판정
+- `lib/market_data.py`의 `get_price_and_52w_range()` — 현재가 + 52주 고저 (기존 재사용)
+- `lib/technical_indicators.py`, `lib/dart_client.py`, `lib/stock_discovery.py` —
+  참고정보(기술적 지표, 실적/공시, 뉴스) 조회 (기존 재사용)
+- `stock_analyzer.py` — 위를 엮어 마크다운 리포트 생성 (`analysis_reports/`에 저장) +
+  콘솔 출력, `--telegram` 옵션으로 텔레그램 전송
+
+### 검증 필요 (2026-07-31 작성, 아직 실전 미검증)
+
+`lib/fundamentals.py`, `lib/stock_search.py`는 개발 환경 네트워크 제한으로 실제
+네이버증권 페이지 마크업을 직접 확인하지 못한 채 작성됐다. `lib/market_data.py`의
+52주 고저 조회가 그랬던 것처럼 실제 마크업이 예상과 다를 가능성이 있다.
+`.github/workflows/stock_analyzer.yml`(workflow_dispatch, 종목명 입력)로 실행해
+로그를 확인하고, 라벨을 못 찾으면 해당 모듈의 `_num_after` 탐색 범위/로직을
+실제 구조에 맞게 조정할 것.

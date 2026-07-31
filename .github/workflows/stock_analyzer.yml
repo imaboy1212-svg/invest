@@ -1,0 +1,53 @@
+name: 종목분석기 (적정주가)
+
+on:
+  # 임시로 만든 종목분석기를 실제 네이버증권 페이지 구조에 대고 검증할 때 쓰는
+  # 수동 트리거. stock_screener.yml/topic_recommender.yml과 같은 이유로 자동
+  # 스케줄은 두지 않는다 — 사람이 종목을 지정해 그때그때 돌리는 도구라서 애초에
+  # 스케줄이 필요하지도 않다.
+  workflow_dispatch:
+    inputs:
+      stock:
+        description: "분석할 종목명 또는 6자리 종목코드"
+        required: true
+        default: "삼성전자"
+      telegram:
+        description: "텔레그램으로도 전송할지"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run stock analyzer
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+        run: |
+          if [ "${{ inputs.telegram }}" = "true" ]; then
+            python stock_analyzer.py "${{ inputs.stock }}" --telegram
+          else
+            python stock_analyzer.py "${{ inputs.stock }}"
+          fi
+
+      - name: Commit report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add analysis_reports/
+          git diff --cached --quiet || git commit -m "chore: 종목분석기 결과 자동 생성 ($(date -u +%Y-%m-%d))"
+          git push
