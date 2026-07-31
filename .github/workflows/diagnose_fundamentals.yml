@@ -1,0 +1,20 @@
+name: (진단용) 재무지표 파싱 구조 확인
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Diagnose fundamentals parsing
+        run: python scratch_diagnose_fundamentals.py
