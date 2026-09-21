@@ -16,6 +16,10 @@
 밸류에이션 판정에는 반영하지 않는다 — 가격 추세와 적정가격은 별개 질문이라는
 stock_screener.py의 기존 설계와 같은 원칙이다.
 
+실제 데이터 수집·조합(종목 해석 → 시세 → 재무지표 → 밸류에이션)은
+lib/analysis.py에 있다 — bestwellth.org 위젯용 api_server.py와 이 파이프라인을
+공유한다.
+
 리포트는 analysis_reports/에 마크다운으로 저장하고 콘솔에도 출력한다.
 --telegram을 주면 텔레그램으로도 요약+리포트 파일을 전송한다(기본은 저장만).
 """
@@ -28,16 +32,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from lib import (
-    dart_client,
-    fundamentals,
-    market_data,
-    stock_discovery,
-    stock_search,
-    technical_indicators,
-    telegram_client,
-    valuation,
-)
+from lib import analysis, telegram_client
+from lib.analysis import AnalysisResult, PriceFetchError, StockNotFoundError
 
 REPORTS_DIR = Path(__file__).resolve().parent / "analysis_reports"
 
@@ -46,19 +42,14 @@ def _fmt(value: float | None, unit: str = "") -> str:
     return f"{value:,.2f}{unit}" if value is not None else "조회 실패"
 
 
-def _build_report(
-    name: str,
-    code: str,
-    price_range: market_data.PriceRangeSnapshot,
-    fund: fundamentals.Fundamentals | None,
-    val_result: valuation.ValuationResult,
-    technical: technical_indicators.TechnicalSnapshot,
-    earnings: dart_client.EarningsSnapshot | None,
-    disclosures: list[dart_client.Disclosure],
-    news: list[str],
-) -> str:
+def _build_report(result: AnalysisResult) -> str:
+    price_range = result.price_range
+    fund = result.fundamentals
+    val_result = result.valuation
+    technical = result.technical
+
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M")
-    lines = [f"# 종목분석 — {name} ({code})", f"_{today} 기준_", ""]
+    lines = [f"# 종목분석 — {result.name} ({result.code})", f"_{today} 기준_", ""]
 
     lines.append("## 적정주가 판단")
     lines.append(f"- 현재가: {price_range.current:,.0f}원")
@@ -96,20 +87,20 @@ def _build_report(
     lines.append("")
 
     lines.append("## 참고: 직전 분기 실적 (DART)")
-    lines.append(f"- {earnings.summary_line() if earnings else '조회 실패'}")
+    lines.append(f"- {result.earnings.summary_line() if result.earnings else '조회 실패'}")
     lines.append("")
 
     lines.append("## 참고: 최근 공시")
-    if disclosures:
-        for d in disclosures:
+    if result.disclosures:
+        for d in result.disclosures:
             lines.append(f"- [{d.receipt_date}] {d.report_name} ({d.url})")
     else:
         lines.append("- 최근 14일 내 공시 없음(또는 조회 실패)")
     lines.append("")
 
     lines.append("## 참고: 최근 뉴스")
-    if news:
-        for n in news:
+    if result.news:
+        for n in result.news:
             lines.append(f"- {n}")
     else:
         lines.append("- 조회된 뉴스 없음")
@@ -118,8 +109,9 @@ def _build_report(
     return "\n".join(lines)
 
 
-def _telegram_summary(name: str, code: str, price_range: market_data.PriceRangeSnapshot, val_result: valuation.ValuationResult) -> str:
-    lines = [f"📊 {name}({code}) 종목분석", f"현재가 {price_range.current:,.0f}원"]
+def _telegram_summary(result: AnalysisResult) -> str:
+    val_result = result.valuation
+    lines = [f"📊 {result.name}({result.code}) 종목분석", f"현재가 {result.price_range.current:,.0f}원"]
     if val_result.average_fair_price is not None:
         lines.append(f"적정주가 추정 {val_result.average_fair_price:,.0f}원 (괴리율 {val_result.gap_pct:+.1f}%)")
     lines.append(f"판정: {val_result.verdict}")
@@ -134,49 +126,28 @@ def main() -> int:
     parser.add_argument("--telegram", action="store_true", help="결과를 텔레그램으로도 전송")
     args = parser.parse_args()
 
-    resolved = stock_search.resolve(args.query)
-    if resolved is None:
-        print(f"[종목분석기] 종목을 찾을 수 없음: {args.query!r}")
-        return 1
-    name, code = resolved
-    print(f"[종목분석기] 분석 대상: {name} ({code})")
-
-    price_range = market_data.get_price_and_52w_range(code)
-    if price_range is None:
-        print(f"[종목분석기] 현재가 조회 실패 — 분석 중단 (code={code})")
-        return 1
-
-    fund = fundamentals.get_fundamentals(code)
-    val_result = valuation.evaluate(
-        current_price=price_range.current,
-        eps=fund.eps if fund else None,
-        bps=fund.bps if fund else None,
-        industry_per=fund.industry_per if fund else None,
-    )
-
-    technical = technical_indicators.analyze(code)
-
-    earnings, disclosures = None, []
     try:
-        corp_code = dart_client.get_corp_code(code)
-        earnings = dart_client.get_latest_earnings(corp_code) if corp_code else None
-        disclosures = dart_client.get_recent_disclosures(corp_code) if corp_code else []
-    except KeyError:
-        print("[종목분석기] DART_API_KEY 미설정 — 실적/공시 참고정보 생략")
+        result = analysis.run_analysis(args.query, include_reference_info=True)
+    except StockNotFoundError as exc:
+        print(f"[종목분석기] {exc}")
+        return 1
+    except PriceFetchError as exc:
+        print(f"[종목분석기] {exc} — 분석 중단")
+        return 1
 
-    news = stock_discovery.get_stock_news(code)
+    print(f"[종목분석기] 분석 대상: {result.name} ({result.code})")
 
-    report = _build_report(name, code, price_range, fund, val_result, technical, earnings, disclosures, news)
+    report = _build_report(result)
     print("\n" + report)
 
     REPORTS_DIR.mkdir(exist_ok=True)
     date_str = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
-    report_path = REPORTS_DIR / f"{date_str}-{name}-분석.md"
+    report_path = REPORTS_DIR / f"{date_str}-{result.name}-분석.md"
     report_path.write_text(report, encoding="utf-8")
     print(f"[종목분석기] 리포트 저장: {report_path}")
 
     if args.telegram:
-        telegram_client.send_message(_telegram_summary(name, code, price_range, val_result))
+        telegram_client.send_message(_telegram_summary(result))
         telegram_client.send_document(report_path)
         print("[종목분석기] 텔레그램 전송 완료")
 
